@@ -7,6 +7,7 @@ PostgreSQL : [https://www.postgresql.org/]
 PostGIS : [https://postgis.net/]
 MobilityDB : [https://github.com/MobilityDB/MobilityDB]
 QGIS : [https://qgis.org/en/site/]
+Move: [https://github.com/mschoema/move]
 PyMeos : [https://pymeos.readthedocs.io/en/latest/]
 
 
@@ -66,6 +67,27 @@ CREATE EXTENSION MOBILITYDB;
 
 ```
 
+Update the postgresql.conf file with these changes :
 
-Installation of QGIS, Move plugin, setup of osgeo4w, python packages(PyMeos, Psycopg2)
+```bash
+# file location : /etc/postgresql/16/main/postgresql.conf
 
+listen_addresses = '*'	
+...
+shared_preload_libraries = 'postgis-3'
+max_locks_per_transaction = 128
+
+```
+
+After installing QGIS with the windows launcher, install Move as described here[https://github.com/mschoema/move].
+
+
+Open osgeo4w shell and install the following python packages :
+
+```bash
+#Activate python env
+o4w_env
+
+python -m pip install pymeos
+
+```
