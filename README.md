@@ -79,15 +79,16 @@ max_locks_per_transaction = 128
 
 ```
 
-After installing QGIS with the windows launcher, install Move as described here[https://github.com/mschoema/move].
+
+To install QGIS on wsl, follow the instruction to install on Ubuntu here : [https://www.qgis.org/fr/site/forusers/alldownloads.html]
 
 
-Open osgeo4w shell and install the following python packages :
+Install the Move plugin : [https://github.com/mschoema/move].
+
+
+For this project, we use Python **3.11.7**, as of right now, to install the most recent version of Pymeos, use this command :
 
 ```bash
-#Activate python env
-o4w_env
-
-python -m pip install pymeos
+pip install --pre --force-reinstall --no-deps pymeos pymeos_cffi
 
 ```
