@@ -98,3 +98,27 @@ pip install --pre --force-reinstall --no-deps pymeos pymeos_cffi
 
 
 ```
+
+
+--- 
+
+To setup Github ssh and credentials on a new Ubuntu vm :
+
+
+```bash
+
+ssh-keygen -t rsa -b 4096 -C "email@gmail.com"
+
+eval "$(ssh-agent -s)"
+
+ssh-add ~/.ssh/id_rsa
+
+cat ~/.ssh/id_rsa.pub
+#Add key to Github website
+
+
+git config --global user.name ""
+git config --global user.email ""
+
+
+```
