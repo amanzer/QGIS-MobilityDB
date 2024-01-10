@@ -13,7 +13,10 @@ pr.addAttributes([QgsField("time", QVariant.DateTime)])
 vlayer.updateFields()
 tp = vlayer.temporalProperties()
 tp.setIsActive(True)
-tp.setMode(Qgis.VectorTemporalMode.FixedTemporalRange)
+#tp.setMode(Qgis.VectorTemporalMode.FixedTemporalRange)
+tp.setMode(qgis.core.QgsVectorLayerTemporalProperties.ModeFixedTemporalRange)
+#tp.setMode(qgis.core.QgsVectorLayerTemporalProperties.ModeFeatureDateTimeInstantFromField)
+
 #tp.setMode(1) #single field with datetime
 tp.setStartField("time")
 crs = vlayer.crs()
