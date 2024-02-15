@@ -2,14 +2,13 @@ import sys
 from datetime import datetime
 from tqdm import tqdm
 
-print("B")
 
 # Frames
 timestamps = sys.argv[1:]
 datetimes = [datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S') for timestamp in timestamps]
 
 # rows
-
+import time
 
 import pandas as pd
 import json
@@ -19,7 +18,7 @@ pymeos_initialize()
 
 ais = pd.read_csv(
     "aisdk-2023-08-01.zip",
-    usecols=["# Timestamp", "MMSI", "Latitude", "Longitude", "SOG"], nrows=100
+    usecols=["# Timestamp", "MMSI", "Latitude", "Longitude", "SOG"], nrows=10000
 )
 ais.columns = ["t", "mmsi", "lat", "lon", "sog"]
 
@@ -49,37 +48,26 @@ trajectories = (
 )
 trajectories["distance"] = trajectories["trajectory"].apply(lambda t: t.length())
 
+interpolation_times = []
 
-features = {}
+features = [[] for _ in range(len(datetimes))]
 
-for frame in tqdm(datetimes):
+
+for i, datetime_obj in tqdm(enumerate(datetimes), total=len(datetimes)):
     for index, row in tqdm(trajectories.iterrows(), total=len(trajectories)):
         try:
-            val = row["trajectory"].value_at_timestamp(time)
+            now2 = time.time()
+            val = row["trajectory"].value_at_timestamp(datetimes[i])
+            interpolation_times.append(time.time()-now2)
+            features[i].append(( row.name , (val[0], val[1])))
         except Exception as e:
             val = None  
 
-        if features[row["mmsi"]] is None:
-            features[row["mmsi"]] = []
-        features[row["mmsi"]].append(val)
+#print(interpolation_times)
+# Serialize the list into a JSON string
+json_string = json.dumps(features)
 
 
-data = {
-    timestamp: [(trip[0], trip[1]) for trip in trips]
-    for timestamp, trips in features.items()
-}
 
-df = pd.DataFrame.from_dict(data, orient='index', columns=['mmsi', 'val'])
-
-# Package the DataFrame and the additional variable into a dictionary
-data_package = {
-    'value': df
-}
-
-# Serialize the dictionary to a JSON string
-json_str = json.dumps(data_package)
-
-
-# flushing output
-import sys
-sys.stdout.flush()
+# Output the JSON string to stdout
+sys.stdout.write(json_string)
