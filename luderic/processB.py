@@ -1,26 +1,28 @@
 import sys
 from datetime import datetime
 from tqdm import tqdm
-
+import time
+import pandas as pd
+import json
+from pymeos import *
 
 # Frames
 timestamps = sys.argv[1:]
 datetimes = [datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S') for timestamp in timestamps]
 
 # rows
-import time
 
-import pandas as pd
-import json
-from pymeos import *
 
 pymeos_initialize()
 
 ais = pd.read_csv(
     "aisdk-2023-08-01.zip",
-    usecols=["# Timestamp", "MMSI", "Latitude", "Longitude", "SOG"], nrows=10000
+    usecols=["# Timestamp", "MMSI", "Latitude", "Longitude", "SOG"],
 )
 ais.columns = ["t", "mmsi", "lat", "lon", "sog"]
+
+
+ais = ais[ais["mmsi"] == 258313000]
 
 ais["t"] = pd.to_datetime(ais["t"], format='%d/%m/%Y %H:%M:%S')
 ais = ais[ais["mmsi"] != 0]
@@ -55,13 +57,17 @@ features = [[] for _ in range(len(datetimes))]
 
 for i, datetime_obj in tqdm(enumerate(datetimes), total=len(datetimes)):
     for index, row in tqdm(trajectories.iterrows(), total=len(trajectories)):
-        try:
+        try :
             now2 = time.time()
-            val = row["trajectory"].value_at_timestamp(datetimes[i])
+            val = row["trajectory"].value_at_timestamp(datetime_obj)
+
             interpolation_times.append(time.time()-now2)
-            features[i].append(( row.name , (val[0], val[1])))
-        except Exception as e:
-            val = None  
+            # features[i].append(( row.name , [val[0], val[1]]))
+
+            features[i].append({"mmsi": row.name, "coordinates": [val.x, val.y]})
+        except Exception as e: 
+            val = None
+
 
 #print(interpolation_times)
 # Serialize the list into a JSON string
