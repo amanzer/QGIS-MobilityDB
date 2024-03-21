@@ -10,6 +10,17 @@ import time
 
 canvas = iface.mapCanvas()
 temporalController = canvas.temporalController()
+
+# Define the new start and end dates
+new_start_date = QDateTime.fromString("2024-01-01T00:00:00", Qt.ISODate)
+new_end_date = QDateTime.fromString("2024-12-31T23:59:59", Qt.ISODate)
+
+# Create a QgsDateTimeRange object with the new start and end dates
+new_temporal_range = QgsDateTimeRange(new_start_date, new_end_date)
+
+# Emit the updateTemporalRange signal with the new temporal range
+temporalController.updateTemporalRange.emit(new_temporal_range)
+
 currentFrameNumber = temporalController.currentFrameNumber()
 
 ## Create a temporal layer (variable 'vlayer') with single field for datetime
@@ -20,14 +31,14 @@ vlayer.updateFields()
 tp = vlayer.temporalProperties()
 tp.setIsActive(True)
 #tp.setMode(Qgis.VectorTemporalMode.FixedTemporalRange)
-tp.setMode(qgis.core.QgsVectorLayerTemporalProperties.ModeFixedTemporalRange)
-#tp.setMode(qgis.core.QgsVectorLayerTemporalProperties.ModeFeatureDateTimeInstantFromField)
+#tp.setMode(qgis.core.QgsVectorLayerTemporalProperties.ModeFixedTemporalRange)
+tp.setMode(qgis.core.QgsVectorLayerTemporalProperties.ModeFeatureDateTimeInstantFromField)
 
 #tp.setMode(1) #single field with datetime
 tp.setStartField("time")
 crs = vlayer.crs()
-crs.createFromId(22992)
-vlayer.setCrs(crs)
+#crs.createFromId(22992)
+#vlayer.setCrs(crs)
 vlayer.updateFields()
 QgsProject.instance().addMapLayer(vlayer)
 
@@ -50,7 +61,7 @@ feature_times = []
 
 # For every frame, use  mobility driver to retrieve valueAtTimestamp(frameTime) and create a corresponding feature
 
-timestamps = []
+timestamps = [308654000]
 dtrange_ends = []
 for i in range(FRAMES_NB):
     dtrange = temporalController.dateTimeRangeForFrameNumber(currentFrameNumber+i)
@@ -59,7 +70,7 @@ for i in range(FRAMES_NB):
 
 
 # Command to execute Program B
-command = ['/home/mali/QGIS-MobilityDB/luderic/test/bin/python', '/home/mali/QGIS-MobilityDB/luderic/processB.py', *timestamps]
+command = ['/home/ali/pymeos/bin/python', '/home/ali/QGIS-MobilityDB/luderic/processB.py', *timestamps]
 
 # Execute the command and capture the output
 result = subprocess.run(command, capture_output=True, text=True)
