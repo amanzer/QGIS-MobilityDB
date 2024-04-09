@@ -36,7 +36,8 @@ cursor = connection.cursor()
 cursor.execute(f"SELECT MMSI FROM public.PyMEOS_demo;")
 mmsi_list = cursor.fetchall()
 
-mmsi_list = mmsi_list[:100]
+
+mmsi_list = mmsi_list[:int(len(mmsi_list)*0.01)] # 20 too much, at 5% it works, around 5468 features for 1 day, minute step
 rows = {}
 
 for mmsi in mmsi_list:

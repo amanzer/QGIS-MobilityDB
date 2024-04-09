@@ -48,11 +48,11 @@ crs = vlayer.crs()
 vlayer.updateFields()
 
 
-url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+# url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 
-map_layer = QgsRasterLayer(url, "OpenStreetMap", "wms")
+# map_layer = QgsRasterLayer(url, "OpenStreetMap", "wms")
 
-QgsProject.instance().addMapLayer(map_layer)
+# QgsProject.instance().addMapLayer(map_layer)
 
 QgsProject.instance().addMapLayer(vlayer)
 
@@ -100,13 +100,13 @@ output_data = json.loads(output_json)
 
 #print(output_data)
 
-features_list =[]
+
 
 
 # iterate over the output_data which is a dictionnary
 
 for keys, items in output_data.items():
-
+    features_list =[]
     datetime_obj = QDateTime.fromString(keys, "yyyy-MM-dd HH:mm:ss")
     
     for i in range(len(items)):
@@ -118,13 +118,11 @@ for keys, items in output_data.items():
             feat.setGeometry(geom) # Set its geometry
             features_list.append(feat)
 
-
-
-
-vlayer.startEditing()
-vlayer.addFeatures(features_list) # Add list of features to vlayer
-vlayer.commitChanges()
-iface.vectorLayerTools().stopEditing(vlayer)
-
+    vlayer.startEditing()
+    vlayer.removeFeatures(vlayer.allFeatures())
+    vlayer.addFeatures(features_list) # Add list of features to vlayer
+    vlayer.commitChanges()
+    iface.vectorLayerTools().stopEditing(vlayer)
+    temporalController.playForward()
 
 total  = time.time() - now 
