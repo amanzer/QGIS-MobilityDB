@@ -3,19 +3,21 @@ The aim of this research project is to explore ways of visualizing MobilityDB te
 
 # Tools
 
-PostgreSQL : [https://www.postgresql.org/]
-PostGIS : [https://postgis.net/]
+PostgreSQL 16 : [https://www.postgresql.org/]
+PostGIS 3.4.2 : [https://postgis.net/]
 MobilityDB : [https://github.com/MobilityDB/MobilityDB]
-QGIS : [https://qgis.org/en/site/]
-Move: [https://github.com/mschoema/move]
+QGIS 3.4: [https://qgis.org/en/site/]
+Move : [https://github.com/mschoema/move]
 PyMeos : [https://pymeos.readthedocs.io/en/latest/]
 
 
 
 # Installation 
 
-The experimentation is conducted on Windows 11 with the help of WSL2 virtual machine of Ubuntu 24 (Ubuntu-Preview on Microsoft store).
-To install postgresql, MobilityDB and Meos :
+The experimentation is conducted on both Ubuntu 22.0(wsl2 VM) and Ubuntu 23.0
+
+
+Installation steps for postgresql, MobilityDB:
 
 ```bash
 
@@ -43,13 +45,12 @@ cmake -DCMAKE_BUILD_TYPE=Debug -DMEOS=1 ..
 make
 sudo make install
 
-
 ```
 
 After installing everything, update the postgresql.conf file with these changes :
 
 ```bash
-# file location : /etc/postgresql/16/main/postgresql.conf
+# file location on wsl2 : /etc/postgresql/16/main/postgresql.conf
 
 listen_addresses = '*'	# To interact with host windows os
 ...
@@ -59,48 +60,24 @@ max_locks_per_transaction = 128
 ```
 
 
-To check if installation is working correctly, you can test it like this :
+- Qgis installation is explained here : [https://www.qgis.org/fr/site/forusers/alldownloads.html]
 
 
-```bash
+- Follow the instructions here to install Move : [https://github.com/mschoema/move].
 
-sudo -i -u postgres
-createdb mobility
-psql -d mobility
-CREATE EXTENSION POSTGIS;
-CREATE EXTENSION MOBILITYDB;
+- Download and compile pymeos : https://github.com/MobilityDB/PyMEOS
+ 
 
-```
+--- 
 
-Follow the instructions on these pages to install QGIS and its Move plugin:
-
-
-- To install QGIS on wsl, follow the instruction to install on Ubuntu here : [https://www.qgis.org/fr/site/forusers/alldownloads.html]
-
-
-- Install the Move plugin : [https://github.com/mschoema/move].
-
-
-For this project, we use Python **3.11.7**, as of right now, with these packages :
+Remarks :
 
 ```bash
-
-pip install shapely
-pip install pandas
-pip install cffi
-
-pip install --pre --force-reinstall --no-deps pymeos pymeos_cffi
-
-
 # Note that in Ubuntu 23 and above, system python is treated as externally managed, to install these library to work within QGIS dev
 # environment add this to pip :
 --break-system-packages
 
-
 ```
-
-
---- 
 
 To setup Github ssh and credentials on a new Ubuntu vm :
 
