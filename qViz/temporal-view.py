@@ -1,22 +1,3 @@
-"""
-This script is used to visualize the trajectories of ships in a temporal view.
-It uses the MobilityDB extension for PostgreSQL to store the trajectories of ships.
-The script uses the PyMEOS library to connect to the MobilityDB database and retrieve the trajectories of ships.
-
-
-1. MobDB : Singleton used to connect to the MobilityDB database and retrieve the MMSI of ships and their trajectories.
-2. FeaturesStore : Creates Points from the trajectories of ships at different timestamps, is used to manage the features
-    to keep in memory at a given time(not implemented ATM)
-3. Qviz : Main class used to create the temporal view and visualize the trajectories of ships.
-
-
-TODO :
--Adapt the database class for a more general approach
--Implement the featuresStore class to manage the features to keep in memory at a given time
--Disconnect timestamps collection from the GUI 
-
-
-"""
 
 from pymeos.db.psycopg import MobilityDB
 from pymeos import *
