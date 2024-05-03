@@ -1,14 +1,16 @@
 # QGIS-MobilityDB
 The aim of this research project is to explore ways of visualizing MobilityDB temporal geometries inside QGIS with its temporal controller.
 
+
+
 # Tools
 
-PostgreSQL 16 : [https://www.postgresql.org/]
-PostGIS 3.4.2 : [https://postgis.net/]
-MobilityDB : [https://github.com/MobilityDB/MobilityDB]
-QGIS 3.4: [https://qgis.org/en/site/]
-Move : [https://github.com/mschoema/move]
-PyMeos : [https://pymeos.readthedocs.io/en/latest/]
+- PostgreSQL 16 : [https://www.postgresql.org/]
+- PostGIS 3.4.2 : [https://postgis.net/]
+- MobilityDB : [https://github.com/MobilityDB/MobilityDB]
+- QGIS 3.4: [https://qgis.org/en/site/]
+- Move : [https://github.com/mschoema/move]
+- PyMeos : [https://pymeos.readthedocs.io/en/latest/]
 
 
 

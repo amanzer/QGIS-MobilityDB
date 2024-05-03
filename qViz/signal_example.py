@@ -3,6 +3,10 @@ from pymeos import *
 from datetime import datetime, timedelta
 
 
+PERCENTAGE_OF_SHIPS = 0.01 # To not overload the memory, we only take a percentage of the ships in the database
+FRAMES_FOR_30_FPS = 48 # Number of frames needed for a 30 FPS animation 
+
+
 class qviz:
     """
     Main class used to create the temporal view and visualize the trajectories of ships.
@@ -53,8 +57,10 @@ class qviz:
 
 
     def next_frames_points(self, timestamps):
+        sub_dict= {key: self.features[key] for key in timestamps if key in self.features}
+        # add all items(which are lists) from sub_dict together in a big list
+        return [item for sublist in sub_dict.values() for item in sublist] 
 
-        return {key: self.features[key] for key in timestamps if key in self.features}
     
     def layer_points(self):
         """
@@ -100,22 +106,7 @@ class qviz:
         #self.updateTimestamps()
         #self.features.update(self.timestamps)
 
-        self.features_list =[]
-      
-        # iterate over the output_data which is a dictionnary
-        features=  self.next_frames_points(self.timestamps_strings[currentFrameNumber:currentFrameNumber+FRAMES_FOR_30_FPS])
-        for keys, items in features.items():
-            datetime_obj = QDateTime.fromString(keys, "yyyy-MM-dd HH:mm:ss")
-            
-            for i in range(len(items)):
-                if len(items[i]) > 0:
-                    feat = QgsFeature(self.vlayer.fields())   # Create feature
-                    feat.setAttributes([datetime_obj])  # Set its attributes
-                    x,y = items[i]
-                    geom = QgsGeometry.fromPointXY(QgsPointXY(x,y)) # Create geometry from valueAtTimestamp
-                    feat.setGeometry(geom) # Set its geometry
-                    self.features_list.append(feat)
-
+        self.features_list = self.next_frames_points(self.timestamps_strings[currentFrameNumber-FRAMES_FOR_30_FPS:currentFrameNumber+FRAMES_FOR_30_FPS])
         self.vlayer.startEditing()
         self.vlayer.addFeatures(self.features_list) # Add list of features to vlayer
         self.vlayer.commitChanges()
@@ -129,9 +120,6 @@ class qviz:
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
 
-
-PERCENTAGE_OF_SHIPS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
-FRAMES_FOR_30_FPS = 48 # Number of frames needed for a 30 FPS animation 
 
 
 class mobDB:
@@ -213,12 +201,22 @@ def doSomething(task, timestamps, qviz):
 
     # features = {Timestamp1 : [(x1,y1), (x2,y2), ...], Timestamp2 : [(x1,y1), (x2,y2), ...], ...}
     features = {str(dt): [] for dt in timestamps}
-
+    layer_Fields = qviz.vlayer.fields()
+    
     for mmsi in mmsi_list:
         for datetime in timestamps:
             try :
                 val = rows[mmsi].value_at_timestamp(datetime)
-                features[datetime.strftime('%Y-%m-%d %H:%M:%S')].append((val.x, val.y))
+                key = datetime.strftime('%Y-%m-%d %H:%M:%S')
+                datetime_qgis_obj = QDateTime.fromString(key, "yyyy-MM-dd HH:mm:ss")
+
+                feat = QgsFeature(layer_Fields)   # Create feature
+                feat.setAttributes([datetime_qgis_obj])  # Set its attributes
+                x,y = val.x, val.y
+                geom = QgsGeometry.fromPointXY(QgsPointXY(x,y)) # Create geometry from valueAtTimestamp
+                feat.setGeometry(geom) # Set its geometry
+                features[key].append(feat)
+
             except Exception as e: 
                 val = None
         # check task.isCanceled() to handle cancellation
@@ -228,7 +226,9 @@ def doSomething(task, timestamps, qviz):
 
             return None
 
-    qviz.setFeatures(features)  
+
+    features["ZZZ"] = "ok"
+    qviz.setFeatures(features)
     return {'features': features, 'task': task.description()}
 
 

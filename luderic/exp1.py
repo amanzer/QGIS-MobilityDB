@@ -7,7 +7,7 @@ import time
 ###
 # Creating a layer with temporal controller, then adding a geometry feature
 ###
-now = time.time()
+
 
 canvas = iface.mapCanvas()
 temporalController = canvas.temporalController()
@@ -52,7 +52,7 @@ url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 
 map_layer = QgsRasterLayer(url, "OpenStreetMap", "wms")
 
-QgsProject.instance().addMapLayer(map_layer)
+#QgsProject.instance().addMapLayer(map_layer)
 
 QgsProject.instance().addMapLayer(vlayer)
 
@@ -127,4 +127,9 @@ vlayer.commitChanges()
 iface.vectorLayerTools().stopEditing(vlayer)
 
 
-total  = time.time() - now 
+# How to remove the features
+
+# vlayer.startEditing()
+# delete_ids = [f.id() for f in vlayer.getFeatures()]
+# vlayer.dataProvider().deleteFeatures(delete_ids)
+# vlayer.commitChanges()
