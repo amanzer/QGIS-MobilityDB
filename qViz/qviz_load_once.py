@@ -1,6 +1,7 @@
 from pymeos.db.psycopg import MobilityDB
 from pymeos import *
 from datetime import datetime, timedelta
+import time
 
 
 PERCENTAGE_OF_SHIPS = 0.01 # To not overload the memory, we only take a percentage of the ships in the database
@@ -20,8 +21,8 @@ class qviz:
 
         
 
-        #frame_rate = 30
-        #self.temporalController.setFramesPerSecond(frame_rate)
+        frame_rate = 30
+        self.temporalController.setFramesPerSecond(frame_rate)
 
         # Define the new start and end dates
         #new_start_date = QDateTime.fromString("2023-06-01T00:00:00", Qt.ISODate)
@@ -48,10 +49,29 @@ class qviz:
 
         self.features = {}
 
-        self.temporalController.updateTemporalRange.connect(self.layer_points)
+        self.temporalController.updateTemporalRange.connect(self.on_new_Frame)
         #self.generatePoints()
         #self.addPoints()
+
+        self.on_new_frame_times = []
+        self.removePoints_times = []
+        self.update_features_times = []
+        self.number_of_points_stored_in_layer = []
         
+
+    def get_stats(self):
+        len_on_new_frame = len(self.on_new_frame_times)
+        len_removePoints = len(self.removePoints_times)
+        len_update_features = len(self.update_features_times)
+
+        on_new_frame_average = sum(self.on_new_frame_times) / len_on_new_frame
+        removePoints_average = sum(self.removePoints_times) / len_removePoints
+        update_features_average = sum(self.update_features_times) / len_update_features
+
+        average_number_of_points_stored_in_layer = sum(self.number_of_points_stored_in_layer) / len(self.number_of_points_stored_in_layer)
+        return f"on_new_frame (average over {len_on_new_frame}): {on_new_frame_average}s \n removePoints (average over {len_removePoints}): {removePoints_average} s\n update_features (average over {len_update_features}): {update_features_average} s \n average number of points stored in layer: {average_number_of_points_stored_in_layer} "
+
+    
     def setFeatures(self, features):
         self.features = features
 
@@ -62,17 +82,17 @@ class qviz:
         return [item for sublist in sub_dict.values() for item in sublist] 
 
     
-    def layer_points(self):
+    def on_new_Frame(self):
         """
-        
-        
+        Function called every time temporal controller frame is changed. It is used to update the features displayed on the map.
         """
         curr_frame = self.temporalController.currentFrameNumber()
         if curr_frame % FRAMES_FOR_30_FPS == 0:
+            now = time.time()
             self.removePoints()
             self.update_features(curr_frame)
             print("Added points for next 48 frames")
-
+            self.on_new_frame_times.append(time.time()-now)
 
     def createMapsLayer(self):
         url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -105,21 +125,24 @@ class qviz:
     def update_features(self, currentFrameNumber=0):
         #self.updateTimestamps()
         #self.features.update(self.timestamps)
-
+        now = time.time()
         self.features_list = self.next_frames_points(self.timestamps_strings[currentFrameNumber-FRAMES_FOR_30_FPS:currentFrameNumber+FRAMES_FOR_30_FPS])
         self.vlayer.startEditing()
         self.vlayer.addFeatures(self.features_list) # Add list of features to vlayer
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
+        self.update_features_times.append(time.time()-now)
+        self.number_of_points_stored_in_layer.append(len(self.features_list))
 
 
     def removePoints(self):
+        now = time.time()
         self.vlayer.startEditing()
         delete_ids = [f.id() for f in self.vlayer.getFeatures()]
         self.vlayer.deleteFeatures(delete_ids)
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
-
+        self.removePoints_times.append(time.time()-now)
 
 
 class mobDB:
@@ -171,7 +194,7 @@ class mobDB:
 MESSAGE_CATEGORY = 'TaskFromFunction'
 
 
-def doSomething(task, timestamps, qviz):
+def fetch_data(task, timestamps, qviz):
 
     """
 
@@ -192,11 +215,10 @@ def doSomething(task, timestamps, qviz):
                              MESSAGE_CATEGORY, Qgis.Info)
 
     db  = mobDB()
-    percentage = PERCENTAGE_OF_SHIPS
     pymeos_initialize()
 
 
-    mmsi_list = db.getMMSI(percentage)
+    mmsi_list = db.getMMSI(PERCENTAGE_OF_SHIPS)
     rows = db.getTrajectories(mmsi_list)
 
     # features = {Timestamp1 : [(x1,y1), (x2,y2), ...], Timestamp2 : [(x1,y1), (x2,y2), ...], ...}
@@ -226,8 +248,6 @@ def doSomething(task, timestamps, qviz):
 
             return None
 
-
-    features["ZZZ"] = "ok"
     qviz.setFeatures(features)
     return {'features': features, 'task': task.description()}
 
@@ -283,13 +303,12 @@ def completed(exception, result=None):
 
 
 start_date = datetime(2023, 6, 1, 0, 0, 0)
-end_date = datetime(2023, 6, 1, 23, 59, 59)
 time_delta = timedelta(minutes=1)
 timestamps = [start_date + i * time_delta for i in range(1440)]
 timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in timestamps]
-# Create a few tasks
+
 tt = qviz(False)
-task1 = QgsTask.fromFunction('Fetch data', doSomething,
+task1 = QgsTask.fromFunction('Fetch data', fetch_data,
 
                              on_finished=completed, timestamps=timestamps, qviz = tt)
 
