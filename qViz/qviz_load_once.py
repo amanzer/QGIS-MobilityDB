@@ -156,7 +156,7 @@ class mobDB:
         "port": 5432,
         "dbname": "mobilitydb",
         "user": "postgres",
-        "password": "postgres"
+        "password": "password"
         }
         try: 
             
