@@ -1,3 +1,7 @@
+"""
+This script is a proxy server that enables us to get the XYZ parameters from QGIS and fetch the corresponding vector tiles from the pg_tile server.
+"""
+
 from flask import Flask, redirect, request, render_template, jsonify
 from datetime import datetime
 import requests

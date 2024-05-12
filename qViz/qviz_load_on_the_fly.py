@@ -1,7 +1,10 @@
 """
+In this script :
 
-1. MobDB : Singleton used to connect to the MobilityDB database
-2. Qviz : Controls the temporal controller and stores the points
+-The data is fetched from the MobilityDB database
+-Using the temporal controller, we add/remove the features from the vector layer every 48 frames
+-The QgisFeature are created during the call to the on_new_frame function
+
 
 
 """

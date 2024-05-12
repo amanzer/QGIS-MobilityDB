@@ -1,3 +1,14 @@
+"""
+In this script :
+
+-The data is fetched from the MobilityDB database and it is converted and stored in a dictionary with timestamps as keys and a list of QgsFeatures as values.
+-Using the temporal controller, we add/remove the features from the vector layer every 48 frames
+
+
+
+"""
+
+
 from pymeos.db.psycopg import MobilityDB
 from pymeos import *
 from datetime import datetime, timedelta

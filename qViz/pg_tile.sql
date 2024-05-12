@@ -151,3 +151,115 @@ PARALLEL SAFE;
 
 COMMENT ON FUNCTION public.countries_name IS 'Filters the countries table by the initial letters of the name using the "name_prefix" parameter.';
 
+
+----
+
+
+CREATE OR REPLACE
+FUNCTION public.NEW_METHOD(
+            z integer, x integer, y  integer,mmsi_ integer,p_start text, p_end text)
+RETURNS bytea
+AS $$
+    WITH bounds AS (
+        SELECT ST_TileEnvelope(z,x,y) as geom
+    ),
+    trips_ AS (
+        SELECT * from pymeos_demo as a where a.mmsi = mmsi_ or mmsi_ = 2190045
+    )
+    ,
+    vals AS (
+        SELECT mmsi,numInstants(trip) as size,asMVTGeom(attime(trip,span(p_start::timestamptz, p_end::timestamptz, true, true)), transform((bounds.geom)::stbox,3857))
+            as tgeom
+        FROM (
+            SELECT
+            mmsi,
+            trajectory::tgeompoint AS trip
+            FROM
+            trips_
+
+        ) as ego, bounds
+    ),
+    mvtgeom AS (
+        SELECT (tgeom).geom,size,mmsi
+        FROM vals
+    )
+SELECT ST_AsMVT(mvtgeom) FROM mvtgeom
+                                  $$
+    LANGUAGE 'sql'
+STABLE
+PARALLEL SAFE;
+
+
+---
+
+CREATE OR REPLACE
+FUNCTION public.omega(
+            z integer, x integer, y  integer,p_start text, p_end text)
+RETURNS bytea
+AS $$
+    WITH bounds AS (
+        SELECT ST_TileEnvelope(z,x,y) as geom
+    ),
+    trips_ AS (
+        SELECT * from pymeos_demo ORDER BY mmsi LIMIT 1000
+    )
+    ,
+    vals AS (
+        SELECT mmsi,numInstants(trip) as size,asMVTGeom(attime(trip,span(p_start::timestamptz, p_end::timestamptz, true, true)), transform((bounds.geom)::stbox,3857))
+            as tgeom
+        FROM (
+            SELECT
+            mmsi,
+            trajectory::tgeompoint AS trip
+            FROM
+            trips_
+
+        ) as ego, bounds
+    ),
+    mvtgeom AS (
+        SELECT (tgeom).geom,size,mmsi
+        FROM vals
+    )
+SELECT ST_AsMVT(mvtgeom) FROM mvtgeom
+                                  $$
+    LANGUAGE 'sql'
+STABLE
+PARALLEL SAFE;
+
+----
+
+--- Current method
+
+CREATE OR REPLACE
+FUNCTION public.omega(
+            z integer, x integer, y  integer,p_start text, p_end text)
+RETURNS bytea
+AS $$
+    WITH bounds AS (
+        SELECT ST_TileEnvelope(z,x,y) as geom
+    ),
+    trips_ AS (
+        SELECT * from pymeos_demo ORDER BY mmsi LIMIT 500
+    )
+    ,
+    vals AS (
+        SELECT mmsi,numInstants(trip) as size,asMVTGeom(attime(trip,span(p_start::timestamptz, p_end::timestamptz, true, true)), transform((bounds.geom)::stbox,3857))
+            as tgeom
+        FROM (
+            SELECT
+            mmsi,
+            trajectory::tgeompoint AS trip
+            FROM
+            trips_
+
+        ) as ego, bounds
+    ),
+    mvtgeom AS (
+        SELECT (tgeom).geom,size,mmsi
+        FROM vals
+    )
+SELECT ST_AsMVT(mvtgeom) FROM mvtgeom
+                                  $$
+    LANGUAGE 'sql'
+STABLE
+PARALLEL SAFE;

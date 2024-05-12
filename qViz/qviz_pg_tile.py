@@ -1,7 +1,14 @@
 """
 
-1. MobDB : Singleton used to connect to the MobilityDB database
-2. Qviz : Controls the temporal controller and stores the points
+In this version of qViz :
+
+- The temporal controller is created and the frame rate is set to 30 fps.
+- The temporal controller is connected to the on_new_frame function.
+- The on_new_frame function Deletes and creates a new vector tile layer every 48 frames (in order to achieve 30 fps with fixed timestamps of AIS dataset).
+
+Regarding PG_tile_server :
+
+- The code creating the function layer is in pg_tile_function_generator.ipynb
 
 
 """
@@ -15,7 +22,7 @@ FRAMES_FOR_30_FPS = 48
 
 class qviz:
     """
-    Main class used to create the temporal view and visualize the trajectories of ships.
+    Creates and controls the temporal controller and the vector tile layer
     """
     def __init__(self, map:bool):
         if map :
@@ -50,6 +57,10 @@ class qviz:
 
 
     def createVectorTileLayer(self, p_start, p_end, zmin=0, zmax=6):
+        """
+        Creates a vector tile layer which fetches data from the pg_tile server
+        we provide the start and end timestamps of the data we want to fetch from the Tgeom table
+        """
         now = time.time()
         ts_start = self.timestamps_strings[p_start]
         ts_end = self.timestamps_strings[p_end]
@@ -81,6 +92,12 @@ class qviz:
 
         
     def get_stats(self):
+        """
+        Returns the average time for:
+        - on_new_frame function
+        - remove_Vector_tiles_layer function
+        - create_Vector_tiles_layer function
+        """
         len_on_new_frame = len(self.on_new_frame_times)
         len_delete_vt_layer = len(self.delete_vector_tiles_layer_times)
         len_create_vt_layer = len(self.create_vector_tiles_layer_times)
@@ -90,14 +107,7 @@ class qviz:
         update_features_average = sum(self.create_vector_tiles_layer_times) / len_create_vt_layer
         return f"on_new_frame (average over {len_on_new_frame}): {on_new_frame_average}s \n delete_vector_tiles_layer (average over {len_delete_vt_layer}): {removePoints_average} s\n create_vector_tiles_layer (average over {len_create_vt_layer}): {update_features_average} s"
         
-    def setFeatures(self, features):
-        self.features = features
 
-
-    def next_frames_points(self, timestamps):
-
-        return {key: self.features[key] for key in timestamps if key in self.features}
-    
     def on_new_frame(self):
         """
         Function called every time temporal controller frame is changed. It is used to update the features displayed on the map.
@@ -125,6 +135,10 @@ class qviz:
 
 
     def createMapsLayer(self):
+        """
+        Creates the map layer using OpenStreetMap
+        """
+
         url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         map_layer = QgsRasterLayer(url, "OpenStreetMap", "wms")
         QgsProject.instance().addMapLayer(map_layer)
@@ -133,6 +147,9 @@ class qviz:
   
 
     def remove_Vector_tiles_layer(self):
+        """
+        Removes the vector tile layer from the QGIS instance
+        """
         now= time.time()
         QgsProject.instance().removeMapLayer(self.vt_layer)
         self.delete_vector_tiles_layer_times.append(time.time()-now)
