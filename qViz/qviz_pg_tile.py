@@ -6,69 +6,12 @@
 
 """
 
-from pymeos.db.psycopg import MobilityDB
 from pymeos import *
 from datetime import datetime, timedelta
 import time
+import math
 
-
-
-PERCENTAGE_OF_SHIPS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
-FRAMES_FOR_30_FPS = 48 # Number of frames needed for a 30 FPS animation 
-
-
-
-def log(msg):
-    QgsMessageLog.logMessage(msg, 'qVIZ', level=Qgis.Info)
-
-
-class mobDB:
-    """
-    Singleton class used to connect to the MobilityDB database and retrieve the MMSI of ships and their trajectories.
-    """
-    
-    def __init__(self):
-        connection_params = {
-        "host": "localhost",
-        "port": 5432,
-        "dbname": "mobilitydb",
-        "user": "postgres",
-        "password": "password"
-        }
-        try: 
-            
-            self.connection = MobilityDB.connect(**connection_params)
-
-            self.cursor = self.connection.cursor()
-
-            self.cursor.execute(f"SELECT MMSI FROM public.PyMEOS_demo;")
-            self.mmsi_list = self.cursor.fetchall()
-        except Exception as e:
-            print(e)
-
-    def getMMSI(self, percentage=0.001):
-        return self.mmsi_list[:int(len(self.mmsi_list)*percentage)]
-
-    def getTrajectories(self, mmsi_list):
-        try:
-            rows={}
-            for mmsi in mmsi_list:
-                ship_mmsi = mmsi[0]
-                self.cursor.execute(f"SELECT * FROM public.PyMEOS_demo WHERE MMSI = {ship_mmsi} ;")
-                _, trajectory, sog = self.cursor.fetchone()
-                rows[mmsi] = trajectory
-
-            return rows
-        except Exception as e:
-            print(e)
-
-
-    def close(self):
-        self.cursor.close()
-        self.connection.close()
-    
-
-
+FRAMES_FOR_30_FPS = 48
 
 class qviz:
     """
@@ -77,38 +20,55 @@ class qviz:
     def __init__(self, map:bool):
         if map :
             self.createMapsLayer()
-        self.createPointsLayer()
+        
         self.canvas = iface.mapCanvas()
         self.temporalController = self.canvas.temporalController()
 
         frame_rate = 30
         self.temporalController.setFramesPerSecond(frame_rate)
-
-        # Define the new start and end dates
-        #new_start_date = QDateTime.fromString("2023-06-01T00:00:00", Qt.ISODate)
-        #new_end_date = QDateTime.fromString("2023-06-01T23:59:59", Qt.ISODate)
-
-        # Create a QgsDateTimeRange object with the new start and end dates
-        #new_temporal_range = QgsDateTimeRange(new_start_date, new_end_date)
-
-        # Emit the updateTemporalRange signal with the new temporal range
-        #self.temporalController.updateTemporalRange.emit(new_temporal_range)
-
         self.steps = 1440
+        self.vlayer = None
 
         start_date = datetime(2023, 6, 1, 0, 0, 0)
         end_date = datetime(2023, 6, 1, 23, 59, 59)
         time_delta = timedelta(minutes=1)
         self.timestamps = [start_date + i * time_delta for i in range(self.steps)]
-        self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in timestamps]
+        self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
                 
-        
-
         self.features = {}
 
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
-        #self.generatePoints()
-        #self.addPoints()
+
+
+        
+        ts_start = self.timestamps_strings[0]
+        ts_end = self.timestamps_strings[FRAMES_FOR_30_FPS]
+
+        # Create a data source URI
+        ds_uri = QgsDataSourceUri()
+        ds_uri.setParam("type", "xyz")
+
+        # Specify the base URL without p_start and p_end parameters
+        base_url = "http://localhost:7800/public.beta/{z}/{x}/{y}.pbf"
+
+        # Append p_start and p_end parameters to the base URL
+
+        url_with_params = f"{base_url}?p_start={ts_start}&p_end={ts_end}" 
+        #url_with_params = f"{base_url}?p_start=2023-06-01%2007:00:00&p_end=2023-06-01%2007:10:00"
+        ds_uri.setParam("url", url_with_params)
+        ds_uri.setParam("zmin", "0")
+        ds_uri.setParam("zmax", "14")
+
+        # Create the vector tile layer
+        self.vt_layer = QgsVectorTileLayer(bytes(ds_uri.encodedUri()).decode(), "OpenMapTiles (OSM)")
+
+        # Add the layer to the map
+        QgsProject.instance().addMapLayer(self.vt_layer)
+
+        print("vt_layer added")
+
+
+
         self.on_new_frame_times = []
         self.removePoints_times = []
         self.update_features_times = []
@@ -141,11 +101,46 @@ class qviz:
         """
         
         curr_frame = self.temporalController.currentFrameNumber()
+
+        
         if curr_frame % FRAMES_FOR_30_FPS == 0:
+            
+            #we update by range of 48 frames, find the start and end of the period for curr_frame
+            p_start = math.floor(curr_frame / FRAMES_FOR_30_FPS)
+            p_end = p_start + FRAMES_FOR_30_FPS
+
+            ts_start = self.timestamps_strings[p_start]
+            ts_end = self.timestamps_strings[p_end]
+
+            print("p_start: ", p_start, " p_end: ", p_end, " ts_start: ", ts_start, " ts_end: ", ts_end)
+
+
             now = time.time()    
-            self.removePoints()
-            self.update_features(curr_frame)
-            print("Added points for next 48 frames")
+            QgsProject.instance().removeMapLayer(self.vt_layer)
+
+            # Create a data source URI
+            ds_uri = QgsDataSourceUri()
+            ds_uri.setParam("type", "xyz")
+
+            # Specify the base URL without p_start and p_end parameters
+            base_url = "http://localhost:7800/public.beta/{z}/{x}/{y}.pbf"
+
+            # Append p_start and p_end parameters to the base URL
+
+            url_with_params = f"{base_url}?p_start={ts_start}&p_end={ts_end}" 
+            #url_with_params = f"{base_url}?p_start=2023-06-01%2007:00:00&p_end=2023-06-01%2007:10:00"
+            ds_uri.setParam("url", url_with_params)
+            ds_uri.setParam("zmin", "0")
+            ds_uri.setParam("zmax", "14")
+
+            # Create the vector tile layer
+            self.vt_layer = QgsVectorTileLayer(bytes(ds_uri.encodedUri()).decode(), "OpenMapTiles (OSM)")
+
+            # Add the layer to the map
+            QgsProject.instance().addMapLayer(self.vt_layer)
+
+            print("vt_layer added")
+
             self.on_new_frame_times.append(time.time()-now)
 
 
@@ -216,110 +211,4 @@ class qviz:
 
 
 
-
-
-
-
-def fetch_data(task, timestamps, qviz):
-    """
-    Raises an exception to abort the task.
-    Returns a result if success.
-    The result will be passed, together with the exception (None in
-    the case of success), to the on_finished method.
-    If there is an exception, there will be no result.
-    """
-
-    QgsMessageLog.logMessage('Started task {}'.format(task.description()),
-
-                             'TaskFromFunction', Qgis.Info)
-
-    db  = mobDB()
-    percentage = PERCENTAGE_OF_SHIPS
-    
-    pymeos_initialize()
-    mmsi_list = db.getMMSI(percentage)
-    rows = db.getTrajectories(mmsi_list)
-
-    # features = {Timestamp1 : [(x1,y1), (x2,y2), ...], Timestamp2 : [(x1,y1), (x2,y2), ...], ...}
-    features = {str(dt): [] for dt in timestamps}
-
-    for mmsi in mmsi_list:
-        for datetime in timestamps:
-            try :
-                val = rows[mmsi].value_at_timestamp(datetime)
-                features[datetime.strftime('%Y-%m-%d %H:%M:%S')].append((val.x, val.y))
-            except Exception as e: 
-                val = None
-        # check task.isCanceled() to handle cancellation
-        if task.isCanceled():
-
-            stopped(task)
-
-            return None
-
-    qviz.setFeatures(features)  
-    return {'features': features, 'task': task.description()}
-
-
-def stopped(task):
-
-    QgsMessageLog.logMessage(
-
-        'Task "{name}" was canceled'.format(
-
-            name=task.description()),
-
-        MESSAGE_CATEGORY, Qgis.Info)
-
-
-def completed(exception, result=None):
-
-    """This is called when doSomething is finished.
-
-    Exception is not None if doSomething raises an exception.
-
-    result is the return value of doSomething."""
-
-    if exception is None:
-
-        if result is None:
-
-            QgsMessageLog.logMessage(
-
-                'Completed with no exception and no result '\
-
-                '(probably manually canceled by the user)',
-
-                MESSAGE_CATEGORY, Qgis.Warning)
-
-        else:
-
-            QgsMessageLog.logMessage(f"Task {result['task']} completed\nNumber of features: {len(result['features'])} )",
-
-                MESSAGE_CATEGORY, Qgis.Info)
-
-    else:
-
-        QgsMessageLog.logMessage("Exception: {}".format(exception),
-
-                                 MESSAGE_CATEGORY, Qgis.Critical)
-
-        raise exception
-    
-
-####################################################################
-
-
-# Creating timestamps here since it is not yet done mobDB
-
-start_date = datetime(2023, 6, 1, 0, 0, 0)
-time_delta = timedelta(minutes=1)
-timestamps = [start_date + i * time_delta for i in range(1440)]
-timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in timestamps]
-
-tt = qviz(False)
-task1 = QgsTask.fromFunction('Fetch data', fetch_data,
-
-                             on_finished=completed, timestamps=timestamps, qviz = tt)
-
-QgsApplication.taskManager().addTask(task1)
+tt= qviz(False)
