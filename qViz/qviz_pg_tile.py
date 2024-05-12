@@ -24,69 +24,72 @@ class qviz:
         self.canvas = iface.mapCanvas()
         self.temporalController = self.canvas.temporalController()
 
+        
+        # TODO : Control animation through qViz 
         frame_rate = 30
         self.temporalController.setFramesPerSecond(frame_rate)
-        self.steps = 1440
-        self.vlayer = None
 
+        # TODO : Replace fixed code with a method to fetch min and max Time from TGeom table
+        self.steps = 1440
         start_date = datetime(2023, 6, 1, 0, 0, 0)
-        end_date = datetime(2023, 6, 1, 23, 59, 59)
         time_delta = timedelta(minutes=1)
         self.timestamps = [start_date + i * time_delta for i in range(self.steps)]
         self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
-                
-        self.features = {}
+                    
+        # List to store the time taken by each function
+        self.on_new_frame_times = []
+        self.delete_vector_tiles_layer_times = []
+        self.create_vector_tiles_layer_times = []
 
+        # Create first vector tile layer
+        self.createVectorTileLayer(0, FRAMES_FOR_30_FPS)
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
 
 
         
-        ts_start = self.timestamps_strings[0]
-        ts_end = self.timestamps_strings[FRAMES_FOR_30_FPS]
 
-        # Create a data source URI
+
+    def createVectorTileLayer(self, p_start, p_end, zmin=0, zmax=6):
+        now = time.time()
+        ts_start = self.timestamps_strings[p_start]
+        ts_end = self.timestamps_strings[p_end]
+
+        print("p_start: ", p_start, " p_end: ", p_end, " ts_start: ", ts_start, " ts_end: ", ts_end)
+
         ds_uri = QgsDataSourceUri()
         ds_uri.setParam("type", "xyz")
+        
+        
 
-        # Specify the base URL without p_start and p_end parameters
-        base_url = "http://localhost:7800/public.beta/{z}/{x}/{y}.pbf"
-
+        pg_tile_server_url = f"http://localhost:7800/public.psi{p_start}/{{z}}/{{x}}/{{y}}.pbf"
         # Append p_start and p_end parameters to the base URL
 
-        url_with_params = f"{base_url}?p_start={ts_start}&p_end={ts_end}" 
+        url_with_params = f"{pg_tile_server_url}?p_start={ts_start}&p_end={ts_end}" 
         #url_with_params = f"{base_url}?p_start=2023-06-01%2007:00:00&p_end=2023-06-01%2007:10:00"
         ds_uri.setParam("url", url_with_params)
-        ds_uri.setParam("zmin", "0")
-        ds_uri.setParam("zmax", "14")
+        ds_uri.setParam("zmin", str(zmin))
+        ds_uri.setParam("zmax", str(zmax))
 
-        # Create the vector tile layer
-        self.vt_layer = QgsVectorTileLayer(bytes(ds_uri.encodedUri()).decode(), "OpenMapTiles (OSM)")
+        
+        self.vt_layer = QgsVectorTileLayer(bytes(ds_uri.encodedUri()).decode(), "PG_tile_server")
 
         # Add the layer to the map
         QgsProject.instance().addMapLayer(self.vt_layer)
 
         print("vt_layer added")
-
-
-
-        self.on_new_frame_times = []
-        self.removePoints_times = []
-        self.update_features_times = []
-        self.number_of_points_stored_in_layer = []
+        self.create_vector_tiles_layer_times.append(time.time()-now)
 
         
     def get_stats(self):
         len_on_new_frame = len(self.on_new_frame_times)
-        len_removePoints = len(self.removePoints_times)
-        len_update_features = len(self.update_features_times)
+        len_delete_vt_layer = len(self.delete_vector_tiles_layer_times)
+        len_create_vt_layer = len(self.create_vector_tiles_layer_times)
 
         on_new_frame_average = sum(self.on_new_frame_times) / len_on_new_frame
-        removePoints_average = sum(self.removePoints_times) / len_removePoints
-        update_features_average = sum(self.update_features_times) / len_update_features
-
-        average_number_of_points_stored_in_layer = sum(self.number_of_points_stored_in_layer) / len(self.number_of_points_stored_in_layer)
-        return f"on_new_frame (average over {len_on_new_frame}): {on_new_frame_average}s \n removePoints (average over {len_removePoints}): {removePoints_average} s\n update_features (average over {len_update_features}): {update_features_average} s \n average number of points stored in layer: {average_number_of_points_stored_in_layer} "
-
+        removePoints_average = sum(self.delete_vector_tiles_layer_times) / len_delete_vt_layer
+        update_features_average = sum(self.create_vector_tiles_layer_times) / len_create_vt_layer
+        return f"on_new_frame (average over {len_on_new_frame}): {on_new_frame_average}s \n delete_vector_tiles_layer (average over {len_delete_vt_layer}): {removePoints_average} s\n create_vector_tiles_layer (average over {len_create_vt_layer}): {update_features_average} s"
+        
     def setFeatures(self, features):
         self.features = features
 
@@ -104,42 +107,19 @@ class qviz:
 
         
         if curr_frame % FRAMES_FOR_30_FPS == 0:
-            
-            #we update by range of 48 frames, find the start and end of the period for curr_frame
-            p_start = math.floor(curr_frame / FRAMES_FOR_30_FPS)
-            p_end = p_start + FRAMES_FOR_30_FPS
-
-            ts_start = self.timestamps_strings[p_start]
-            ts_end = self.timestamps_strings[p_end]
-
-            print("p_start: ", p_start, " p_end: ", p_end, " ts_start: ", ts_start, " ts_end: ", ts_end)
-
-
             now = time.time()    
-            QgsProject.instance().removeMapLayer(self.vt_layer)
 
-            # Create a data source URI
-            ds_uri = QgsDataSourceUri()
-            ds_uri.setParam("type", "xyz")
+            self.remove_Vector_tiles_layer()
+        
+            # Calculate bin index
+            bin_index = curr_frame // FRAMES_FOR_30_FPS
+            p_start = bin_index * FRAMES_FOR_30_FPS
+            p_end = min((bin_index + 1) * FRAMES_FOR_30_FPS - 1, self.steps - 1)
 
-            # Specify the base URL without p_start and p_end parameters
-            base_url = "http://localhost:7800/public.beta/{z}/{x}/{y}.pbf"
-
-            # Append p_start and p_end parameters to the base URL
-
-            url_with_params = f"{base_url}?p_start={ts_start}&p_end={ts_end}" 
-            #url_with_params = f"{base_url}?p_start=2023-06-01%2007:00:00&p_end=2023-06-01%2007:10:00"
-            ds_uri.setParam("url", url_with_params)
-            ds_uri.setParam("zmin", "0")
-            ds_uri.setParam("zmax", "14")
-
-            # Create the vector tile layer
-            self.vt_layer = QgsVectorTileLayer(bytes(ds_uri.encodedUri()).decode(), "OpenMapTiles (OSM)")
-
-            # Add the layer to the map
-            QgsProject.instance().addMapLayer(self.vt_layer)
-
-            print("vt_layer added")
+            print(f"Bin Index: {bin_index}")
+            print(f"Start Frame: {p_start}")
+            print(f"End Frame: {p_end}")
+            self.createVectorTileLayer(p_start, p_end)
 
             self.on_new_frame_times.append(time.time()-now)
 
@@ -149,65 +129,13 @@ class qviz:
         map_layer = QgsRasterLayer(url, "OpenStreetMap", "wms")
         QgsProject.instance().addMapLayer(map_layer)
     
-    
-    def createPointsLayer(self):
-        self.vlayer = QgsVectorLayer("Point", "points_3", "memory")
-        pr = self.vlayer.dataProvider()
-        pr.addAttributes([QgsField("time", QVariant.DateTime)])
-        self.vlayer.updateFields()
-        tp = self.vlayer.temporalProperties()
-        tp.setIsActive(True)
-        tp.setMode(qgis.core.QgsVectorLayerTemporalProperties.ModeFeatureDateTimeInstantFromField)
-        tp.setStartField("time")
-        self.vlayer.updateFields()
 
-        QgsProject.instance().addMapLayer(self.vlayer)
+  
 
-    def updateTimestamps(self):
-        self.timestamps = []
-        #self.dtrange_ends = []
-        currentFrameNumber = self.temporalController.currentFrameNumber()
-        for i in range(self.steps):
-            dtrange = self.temporalController.dateTimeRangeForFrameNumber(currentFrameNumber+i)
-            self.timestamps.append(dtrange.begin().toPyDateTime().replace(tzinfo=dtrange.begin().toPyDateTime().tzinfo))
-            #self.dtrange_ends.append(dtrange.end())
-
-    def update_features(self, currentFrameNumber=0):
-        #self.updateTimestamps()
-        #self.features.update(self.timestamps)
+    def remove_Vector_tiles_layer(self):
         now= time.time()
-
-        self.features_list =[]
-      
-        # iterate over the output_data which is a dictionnary
-        features=  self.next_frames_points(self.timestamps_strings[currentFrameNumber:currentFrameNumber+FRAMES_FOR_30_FPS])
-        for keys, items in features.items():
-            datetime_obj = QDateTime.fromString(keys, "yyyy-MM-dd HH:mm:ss")
-            
-            for i in range(len(items)):
-                if len(items[i]) > 0:
-                    feat = QgsFeature(self.vlayer.fields())   # Create feature
-                    feat.setAttributes([datetime_obj])  # Set its attributes
-                    x,y = items[i]
-                    geom = QgsGeometry.fromPointXY(QgsPointXY(x,y)) # Create geometry from valueAtTimestamp
-                    feat.setGeometry(geom) # Set its geometry
-                    self.features_list.append(feat)
-
-        self.vlayer.startEditing()
-        self.vlayer.addFeatures(self.features_list) # Add list of features to vlayer
-        self.vlayer.commitChanges()
-        iface.vectorLayerTools().stopEditing(self.vlayer)
-        self.update_features_times.append(time.time()-now)
-        self.number_of_points_stored_in_layer.append(len(self.features_list))
-
-    def removePoints(self):
-        now= time.time()
-        self.vlayer.startEditing()
-        delete_ids = [f.id() for f in self.vlayer.getFeatures()]
-        self.vlayer.deleteFeatures(delete_ids)
-        self.vlayer.commitChanges()
-        iface.vectorLayerTools().stopEditing(self.vlayer)
-        self.removePoints_times.append(time.time()-now)
+        QgsProject.instance().removeMapLayer(self.vt_layer)
+        self.delete_vector_tiles_layer_times.append(time.time()-now)
 
 
 
