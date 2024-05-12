@@ -1,19 +1,10 @@
 """
-This script is used to visualize the trajectories of ships in a temporal view.
-It uses the MobilityDB extension for PostgreSQL to store the trajectories of ships.
-The script uses the PyMEOS library to connect to the MobilityDB database and retrieve the trajectories of ships.
+In this script :
 
+-The data is fetched from the MobilityDB database
+-Using the temporal controller, we add/remove the features from the vector layer every 48 frames
+-The QgisFeature are created during the call to the on_new_frame function
 
-1. MobDB : Singleton used to connect to the MobilityDB database and retrieve the MMSI of ships and their trajectories.
-2. FeaturesStore : Creates Points from the trajectories of ships at different timestamps, is used to manage the features
-    to keep in memory at a given time(not implemented ATM)
-3. Qviz : Main class used to create the temporal view and visualize the trajectories of ships.
-
-
-TODO :
--Adapt the database class for a more general approach
--Implement the featuresStore class to manage the features to keep in memory at a given time
--Disconnect timestamps collection from the GUI 
 
 
 """
@@ -21,10 +12,17 @@ TODO :
 from pymeos.db.psycopg import MobilityDB
 from pymeos import *
 from datetime import datetime, timedelta
+import time
+
 
 
 PERCENTAGE_OF_SHIPS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
 FRAMES_FOR_30_FPS = 48 # Number of frames needed for a 30 FPS animation 
+
+
+
+def log(msg):
+    QgsMessageLog.logMessage(msg, 'qVIZ', level=Qgis.Info)
 
 
 class mobDB:
@@ -38,7 +36,7 @@ class mobDB:
         "port": 5432,
         "dbname": "mobilitydb",
         "user": "postgres",
-        "password": "postgres"
+        "password": "password"
         }
         try: 
             
@@ -73,79 +71,21 @@ class mobDB:
         self.connection.close()
     
 
-def fetchData():
-    pass    
-
-
-class featuresStore:
-    """
-    Creates Points from the trajectories of ships at different timestamps, is used to manage the features
-    """
-
-    def __init__(self, percentage=0.001, timestamps=[]):
-        self.features = {}
-        self.db  = mobDB()
-        self.percentage = percentage
-        pymeos_initialize()
-
-        self.tm = QgsApplication.taskManager()
-
-        task = MoveTTask(f"Move: Creating tgeom view {col}", query,
-                                     self.project_title, self.db, col,
-                                     self.add_tgeom_layer, self.raise_error)
-        self.tm.addTask(task)
-        self.update(timestamps)
-
-
-
-    def update(self, timestamps):
-        self.timestamps = timestamps 
-        self.features = {dt: [] for dt in timestamps}
-        
-
-
-        mmsi_list = self.db.getMMSI(self.percentage)
-        self.rows = self.db.getTrajectories(mmsi_list)
-
-        # features = {Timestamp1 : [(x1,y1), (x2,y2), ...], Timestamp2 : [(x1,y1), (x2,y2), ...], ...}
-        self.features = {str(dt): [] for dt in self.timestamps}
-
-        for mmsi in mmsi_list:
-            for datetime in self.timestamps:
-                try :
-                    val = self.rows[mmsi].value_at_timestamp(datetime)
-                    self.features[datetime.strftime('%Y-%m-%d %H:%M:%S')].append((val.x, val.y))
-                except Exception as e: 
-                    val = None
-        
-    
-
-
-    def getFeatures(self):
-        return self.features
-
-
-
-def log(msg):
-    QgsMessageLog.logMessage(msg, 'Move', level=Qgis.Info)
-
 
 
 class qviz:
     """
     Main class used to create the temporal view and visualize the trajectories of ships.
     """
-    def __init__(self, features, map:bool):
+    def __init__(self, map:bool):
         if map :
             self.createMapsLayer()
         self.createPointsLayer()
         self.canvas = iface.mapCanvas()
         self.temporalController = self.canvas.temporalController()
 
-        
-
-        #frame_rate = 30
-        #self.temporalController.setFramesPerSecond(frame_rate)
+        frame_rate = 30
+        self.temporalController.setFramesPerSecond(frame_rate)
 
         # Define the new start and end dates
         #new_start_date = QDateTime.fromString("2023-06-01T00:00:00", Qt.ISODate)
@@ -162,17 +102,34 @@ class qviz:
         start_date = datetime(2023, 6, 1, 0, 0, 0)
         end_date = datetime(2023, 6, 1, 23, 59, 59)
         time_delta = timedelta(minutes=1)
-        self.timestamps = [start_date + i * time_delta for i in range(steps)]
+        self.timestamps = [start_date + i * time_delta for i in range(self.steps)]
         self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in timestamps]
                 
-
+        
 
         self.features = {}
 
-        self.temporalController.updateTemporalRange.connect(self.layer_points)
+        self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         #self.generatePoints()
         #self.addPoints()
+        self.on_new_frame_times = []
+        self.removePoints_times = []
+        self.update_features_times = []
+        self.number_of_points_stored_in_layer = []
+
         
+    def get_stats(self):
+        len_on_new_frame = len(self.on_new_frame_times)
+        len_removePoints = len(self.removePoints_times)
+        len_update_features = len(self.update_features_times)
+
+        on_new_frame_average = sum(self.on_new_frame_times) / len_on_new_frame
+        removePoints_average = sum(self.removePoints_times) / len_removePoints
+        update_features_average = sum(self.update_features_times) / len_update_features
+
+        average_number_of_points_stored_in_layer = sum(self.number_of_points_stored_in_layer) / len(self.number_of_points_stored_in_layer)
+        return f"on_new_frame (average over {len_on_new_frame}): {on_new_frame_average}s \n removePoints (average over {len_removePoints}): {removePoints_average} s\n update_features (average over {len_update_features}): {update_features_average} s \n average number of points stored in layer: {average_number_of_points_stored_in_layer} "
+
     def setFeatures(self, features):
         self.features = features
 
@@ -181,16 +138,18 @@ class qviz:
 
         return {key: self.features[key] for key in timestamps if key in self.features}
     
-    def layer_points(self):
+    def on_new_frame(self):
+        """
+        Function called every time temporal controller frame is changed. It is used to update the features displayed on the map.
         """
         
-        
-        """
         curr_frame = self.temporalController.currentFrameNumber()
         if curr_frame % FRAMES_FOR_30_FPS == 0:
+            now = time.time()    
             self.removePoints()
             self.update_features(curr_frame)
             print("Added points for next 48 frames")
+            self.on_new_frame_times.append(time.time()-now)
 
 
     def createMapsLayer(self):
@@ -224,6 +183,7 @@ class qviz:
     def update_features(self, currentFrameNumber=0):
         #self.updateTimestamps()
         #self.features.update(self.timestamps)
+        now= time.time()
 
         self.features_list =[]
       
@@ -245,45 +205,41 @@ class qviz:
         self.vlayer.addFeatures(self.features_list) # Add list of features to vlayer
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
-
+        self.update_features_times.append(time.time()-now)
+        self.number_of_points_stored_in_layer.append(len(self.features_list))
 
     def removePoints(self):
+        now= time.time()
         self.vlayer.startEditing()
         delete_ids = [f.id() for f in self.vlayer.getFeatures()]
         self.vlayer.deleteFeatures(delete_ids)
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
+        self.removePoints_times.append(time.time()-now)
 
 
 
-MESSAGE_CATEGORY = 'TaskFromFunction'
 
 
-def doSomething(task, timestamps, qviz):
 
+
+def fetch_data(task, timestamps, qviz):
     """
-
     Raises an exception to abort the task.
-
     Returns a result if success.
-
     The result will be passed, together with the exception (None in
-
     the case of success), to the on_finished method.
-
     If there is an exception, there will be no result.
-
     """
 
     QgsMessageLog.logMessage('Started task {}'.format(task.description()),
 
-                             MESSAGE_CATEGORY, Qgis.Info)
+                             'TaskFromFunction', Qgis.Info)
 
     db  = mobDB()
     percentage = PERCENTAGE_OF_SHIPS
+    
     pymeos_initialize()
-
-
     mmsi_list = db.getMMSI(percentage)
     rows = db.getTrajectories(mmsi_list)
 
@@ -352,49 +308,21 @@ def completed(exception, result=None):
                                  MESSAGE_CATEGORY, Qgis.Critical)
 
         raise exception
+    
+
+####################################################################
+
+
+# Creating timestamps here since it is not yet done mobDB
 
 start_date = datetime(2023, 6, 1, 0, 0, 0)
-end_date = datetime(2023, 6, 1, 23, 59, 59)
 time_delta = timedelta(minutes=1)
-timestamps = [start_date + i * time_delta for i in range(steps)]
+timestamps = [start_date + i * time_delta for i in range(1440)]
 timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in timestamps]
-# Create a few tasks
-
 
 tt = qviz(False)
-task1 = QgsTask.fromFunction('Fetch data', doSomething,
+task1 = QgsTask.fromFunction('Fetch data', fetch_data,
 
-                             on_finished=completed, timestamps=timestamps)
+                             on_finished=completed, timestamps=timestamps, qviz = tt)
 
 QgsApplication.taskManager().addTask(task1)
-
-task2 = QgsTask.fromFunction('Waste cpu 2', doSomething,
-
-                             on_finished=completed, wait_time=3)
-
-
-
-QgsApplication.taskManager().addTask(task2)
-
-
-
-##################################################################################### 
-###########################################TESTS#####################################
-##################################################################################### 
-class TestMobiDB:
-    def __init__(self, host:str, port:int, db:str, user:str, password:str):
-        beingTested = mobDB(host, port, db, user, password)
-        mmsi_list=beingTested.getMMSI()
-        assert len(mmsi_list) == 5
-        assert len(beingTested.getTrajectories(mmsi_list)) == 5
-        beingTested.close()
-        print(f"No errors in {self.__class__.__name__}")
-
-#TestMobiDB("localhost", 5432, "mobilitydb", "postgres", "postgres")
-
-class TestFeaturesStore:
-    def __init__(self):
-        beingTested = featuresStore()
-        beingTested.update([datetime.datetime(2023, 6, 1, 0, 0)])
-        assert beingTested.getFeatures() == {'2023-06-01 00:00:00': [(12.3227, 56.1102)]}
-        print(f"No errors in {self.__class__.__name__}")
