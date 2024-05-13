@@ -1,16 +1,13 @@
 """
 /!\\ We are experimenting with the caching system of PG_tile server
-This file provides a solution where there exists a different function layer in the PG_tile server for 
-each frame time range.
-
+This file provides a solution where one function layer in pg_tile server is used
+for all time ranges
 
 In this version of qViz :
 
 - The temporal controller is created and the frame rate is set to 30 fps.
 - The temporal controller is connected to the on_new_frame function.
 - The on_new_frame function Deletes and creates a new vector tile layer every 48 frames (in order to achieve 30 fps with fixed timestamps of AIS dataset).
-
-
 
 Regarding PG_tile_server :
 
@@ -24,7 +21,7 @@ from datetime import datetime, timedelta
 import time
 import math
 
-FRAMES_FOR_30_FPS = 48
+FRAMES_FOR_30_FPS = 12
 
 class qviz:
     """
@@ -78,7 +75,7 @@ class qviz:
         
         
 
-        pg_tile_server_url = f"http://localhost:7800/public.psi{p_start}/{{z}}/{{x}}/{{y}}.pbf"
+        pg_tile_server_url = f"http://localhost:7800/public.psi0/{{z}}/{{x}}/{{y}}.pbf"
         # Append p_start and p_end parameters to the base URL
 
         url_with_params = f"{pg_tile_server_url}?p_start={ts_start}&p_end={ts_end}" 
