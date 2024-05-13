@@ -84,6 +84,14 @@ class qviz:
         
         self.vt_layer = QgsVectorTileLayer(bytes(ds_uri.encodedUri()).decode(), "PG_tile_server")
 
+
+        with open("renderer.xml", "r") as file:
+            xml_string = file.read()
+        doc = QDomDocument()
+        doc.setContent(xml_string)
+        symbology_element = doc.firstChildElement("symbology")
+        
+        self.vt_layer.renderer().readXml(symbology_element, QgsReadWriteContext())
         # Add the layer to the map
         QgsProject.instance().addMapLayer(self.vt_layer)
 
