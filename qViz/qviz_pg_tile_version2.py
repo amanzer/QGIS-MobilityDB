@@ -59,7 +59,7 @@ class qviz:
         
 
 
-    def createVectorTileLayer(self, p_start, p_end, zmin=0, zmax=6):
+    def createVectorTileLayer(self, p_start, p_end, zmin=0, zmax=16):
         """
         Creates a vector tile layer which fetches data from the pg_tile server
         we provide the start and end timestamps of the data we want to fetch from the Tgeom table
@@ -75,7 +75,7 @@ class qviz:
         
         
 
-        pg_tile_server_url = f"http://localhost:7800/public.psi0/{{z}}/{{x}}/{{y}}.pbf"
+        pg_tile_server_url = f"http://0.0.0.0:7800/public.zumba/{{z}}/{{x}}/{{y}}.pbf"
         # Append p_start and p_end parameters to the base URL
 
         url_with_params = f"{pg_tile_server_url}?p_start={ts_start}&p_end={ts_end}" 

@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 import time
 import math
 
-FRAMES_FOR_30_FPS = 48
+FRAMES_FOR_30_FPS = 12
 
 class qviz:
     """
@@ -78,7 +78,7 @@ class qviz:
         
         
 
-        pg_tile_server_url = f"http://localhost:7800/public.psi{p_start}/{{z}}/{{x}}/{{y}}.pbf"
+        pg_tile_server_url = f"http://0.0.0.0:7800/public.vulcan{p_start}/{{z}}/{{x}}/{{y}}.pbf"
         # Append p_start and p_end parameters to the base URL
 
         url_with_params = f"{pg_tile_server_url}?p_start={ts_start}&p_end={ts_end}" 
