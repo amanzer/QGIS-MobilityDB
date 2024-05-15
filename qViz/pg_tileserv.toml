@@ -1,0 +1,38 @@
+# Database connection
+DbConnection = "postgresql://postgres:postgres@0.0.0.0/mobilitydb"
+# Close pooled connections after this interval
+DbPoolMaxConnLifeTime = "1h"
+# Hold no more than this number of connections in the database pool
+DbPoolMaxConns = 4
+# Look to read html templates from this directory
+AssetsPath = "./assets"
+# Accept connections on this subnet (default accepts on all subnets)
+HttpHost = "0.0.0.0"
+# Accept connections on this port
+HttpPort = 7800
+HttpsPort = 7801
+# Advertise URLs relative to this server name
+# default is to look this up from incoming request headers
+# UrlBase = "http://yourserver.com/"
+UrlBase = "http://0.0.0.0/"
+# Cache control configuration. TTL is time in seconds to request
+# that responses be cached by any downstream caching services.
+# Zero means no cache control header will be set.
+# CacheTTL = 0
+CacheTTL = 600
+
+# Resolution to quantize vector tiles to
+DefaultResolution = 4096
+# Rendering buffer to add to vector tiles
+DefaultBuffer = 256
+# Limit number of features requested (-1 = no limit)
+MaxFeaturesPerTile = -1
+# Advertise this minimum zoom level
+DefaultMinZoom = 0
+# Advertise this maximum zoom level
+DefaultMaxZoom = 22
+# Allow any page to consume these tiles
+#CORSOrigins = *
+# tra logging information?
+Debug = false
+
