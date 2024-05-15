@@ -201,7 +201,7 @@ AS $$
         SELECT ST_TileEnvelope(z,x,y) as geom
     ),
     trips_ AS (
-        SELECT * from pymeos_demo ORDER BY mmsi LIMIT 1000
+        SELECT * from pymeos_demo ORDER BY mmsi LIMIT 500
     )
     ,
     vals AS (
@@ -230,16 +230,17 @@ PARALLEL SAFE;
 
 --- Current method
 
+
 CREATE OR REPLACE
-FUNCTION public.omega(
-            z integer, x integer, y  integer,p_start text, p_end text)
-RETURNS bytea
+FUNCTION public.tpoint_mvt(
+            z integer, x integer, y  integer,p_start text, p_end text, number_of_points integer default 500)
+RETURNS bytea 
 AS $$
     WITH bounds AS (
         SELECT ST_TileEnvelope(z,x,y) as geom
     ),
     trips_ AS (
-        SELECT * from pymeos_demo ORDER BY mmsi LIMIT 500
+        SELECT * from pymeos_demo ORDER BY mmsi LIMIT number_of_points
     )
     ,
     vals AS (

@@ -21,7 +21,8 @@ from datetime import datetime, timedelta
 import time
 import math
 
-FRAMES_FOR_30_FPS = 12
+FRAMES_FOR_30_FPS = 6
+MAX_POINTS = 100
 
 class qviz:
     """
@@ -59,7 +60,7 @@ class qviz:
         
 
 
-    def createVectorTileLayer(self, p_start, p_end, zmin=0, zmax=16):
+    def createVectorTileLayer(self, p_start, p_end, zmin=0, zmax=4):
         """
         Creates a vector tile layer which fetches data from the pg_tile server
         we provide the start and end timestamps of the data we want to fetch from the Tgeom table
@@ -75,10 +76,10 @@ class qviz:
         
         
 
-        pg_tile_server_url = f"http://0.0.0.0:7800/public.zumba/{{z}}/{{x}}/{{y}}.pbf"
+        pg_tile_server_url = f"http://0.0.0.0:7800/public.tpoint_mvt/{{z}}/{{x}}/{{y}}.pbf"
         # Append p_start and p_end parameters to the base URL
 
-        url_with_params = f"{pg_tile_server_url}?p_start={ts_start}&p_end={ts_end}" 
+        url_with_params = f"{pg_tile_server_url}?p_start={ts_start}&p_end={ts_end}&number_of_points={MAX_POINTS}" 
         #url_with_params = f"{base_url}?p_start=2023-06-01%2007:00:00&p_end=2023-06-01%2007:10:00"
         ds_uri.setParam("url", url_with_params)
         ds_uri.setParam("zmin", str(zmin))
