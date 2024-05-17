@@ -22,7 +22,8 @@ import time
 import math
 
 FRAMES_FOR_30_FPS = 6
-MAX_POINTS = 100
+MAX_POINTS = 1000
+MAX_ZOOM_LEVEL = 4
 
 class qviz:
     """
@@ -53,7 +54,7 @@ class qviz:
         self.create_vector_tiles_layer_times = []
 
         # Create first vector tile layer
-        self.createVectorTileLayer(0, FRAMES_FOR_30_FPS)
+        self.createVectorTileLayer(0, FRAMES_FOR_30_FPS, 0, MAX_ZOOM_LEVEL)
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
 
 
@@ -141,7 +142,7 @@ class qviz:
             print(f"Bin Index: {bin_index}")
             print(f"Start Frame: {p_start}")
             print(f"End Frame: {p_end}")
-            self.createVectorTileLayer(p_start, p_end)
+            self.createVectorTileLayer(p_start, p_end, 0, MAX_ZOOM_LEVEL)
 
             self.on_new_frame_times.append(time.time()-now)
 
