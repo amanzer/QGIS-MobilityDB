@@ -98,16 +98,20 @@ class qviz:
         #self.temporalController.updateTemporalRange.emit(new_temporal_range)
 
         self.steps = 1440
-
+        self.features = {}
         start_date = datetime(2023, 6, 1, 0, 0, 0)
         end_date = datetime(2023, 6, 1, 23, 59, 59)
         time_delta = timedelta(minutes=1)
         self.timestamps = [start_date + i * time_delta for i in range(self.steps)]
         self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
                 
-        
+        task1 = QgsTask.fromFunction('Fetch data', self.fetch_data,
 
-        self.features = {}
+                             on_finished=self.completed, timestamps=self.timestamps, qviz = self)
+
+        QgsApplication.taskManager().addTask(task1)
+
+        
 
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         #self.generatePoints()
@@ -217,97 +221,101 @@ class qviz:
         iface.vectorLayerTools().stopEditing(self.vlayer)
         self.removePoints_times.append(time.time()-now)
 
+    def completed(exception, result=None):
 
+        """This is called when doSomething is finished.
 
+        Exception is not None if doSomething raises an exception.
 
+        result is the return value of doSomething."""
 
+        if exception is None:
 
+            if result is None:
 
-def fetch_data(task, timestamps, qviz):
-    """
-    Raises an exception to abort the task.
-    Returns a result if success.
-    The result will be passed, together with the exception (None in
-    the case of success), to the on_finished method.
-    If there is an exception, there will be no result.
-    """
+                QgsMessageLog.logMessage(
 
-    QgsMessageLog.logMessage('Started task {}'.format(task.description()),
+                    'Completed with no exception and no result '\
 
-                             'TaskFromFunction', Qgis.Info)
+                    '(probably manually canceled by the user)',
 
-    db  = mobDB()
-    percentage = PERCENTAGE_OF_SHIPS
-    
-    pymeos_initialize()
-    mmsi_list = db.getMMSI(percentage)
-    rows = db.getTrajectories(mmsi_list)
+                    MESSAGE_CATEGORY, Qgis.Warning)
 
-    # features = {Timestamp1 : [(x1,y1), (x2,y2), ...], Timestamp2 : [(x1,y1), (x2,y2), ...], ...}
-    features = {str(dt): [] for dt in timestamps}
+            else:
 
-    for mmsi in mmsi_list:
-        for datetime in timestamps:
-            try :
-                val = rows[mmsi].value_at_timestamp(datetime)
-                features[datetime.strftime('%Y-%m-%d %H:%M:%S')].append((val.x, val.y))
-            except Exception as e: 
-                val = None
-        # check task.isCanceled() to handle cancellation
-        if task.isCanceled():
+                QgsMessageLog.logMessage(f"Task {result['task']} completed\nNumber of features: {len(result['features'])} )",
 
-            stopped(task)
-
-            return None
-
-    qviz.setFeatures(features)  
-    return {'features': features, 'task': task.description()}
-
-
-def stopped(task):
-
-    QgsMessageLog.logMessage(
-
-        'Task "{name}" was canceled'.format(
-
-            name=task.description()),
-
-        MESSAGE_CATEGORY, Qgis.Info)
-
-
-def completed(exception, result=None):
-
-    """This is called when doSomething is finished.
-
-    Exception is not None if doSomething raises an exception.
-
-    result is the return value of doSomething."""
-
-    if exception is None:
-
-        if result is None:
-
-            QgsMessageLog.logMessage(
-
-                'Completed with no exception and no result '\
-
-                '(probably manually canceled by the user)',
-
-                MESSAGE_CATEGORY, Qgis.Warning)
+                    MESSAGE_CATEGORY, Qgis.Info)
 
         else:
 
-            QgsMessageLog.logMessage(f"Task {result['task']} completed\nNumber of features: {len(result['features'])} )",
+            QgsMessageLog.logMessage("Exception: {}".format(exception),
 
-                MESSAGE_CATEGORY, Qgis.Info)
+                                    MESSAGE_CATEGORY, Qgis.Critical)
 
-    else:
+            raise exception
+    
+    
 
-        QgsMessageLog.logMessage("Exception: {}".format(exception),
+    def stopped(task):
 
-                                 MESSAGE_CATEGORY, Qgis.Critical)
+        QgsMessageLog.logMessage(
 
-        raise exception
+            'Task "{name}" was canceled'.format(
+
+                name=task.description()),
+
+            MESSAGE_CATEGORY, Qgis.Info)
+        
+    
+    def fetch_data(task, timestamps, qviz):
+        """
+        Raises an exception to abort the task.
+        Returns a result if success.
+        The result will be passed, together with the exception (None in
+        the case of success), to the on_finished method.
+        If there is an exception, there will be no result.
+        """
+
+        QgsMessageLog.logMessage('Started task {}'.format(task.description()),
+
+                                'TaskFromFunction', Qgis.Info)
+
+        db  = mobDB()
+        percentage = PERCENTAGE_OF_SHIPS
+        
+        pymeos_initialize()
+        mmsi_list = db.getMMSI(percentage)
+        rows = db.getTrajectories(mmsi_list)
+
+        # features = {Timestamp1 : [(x1,y1), (x2,y2), ...], Timestamp2 : [(x1,y1), (x2,y2), ...], ...}
+        features = {str(dt): [] for dt in timestamps}
+
+        for mmsi in mmsi_list:
+            for datetime in timestamps:
+                try :
+                    val = rows[mmsi].value_at_timestamp(datetime)
+                    features[datetime.strftime('%Y-%m-%d %H:%M:%S')].append((val.x, val.y))
+                except Exception as e: 
+                    val = None
+            # check task.isCanceled() to handle cancellation
+            if task.isCanceled():
+
+                stopped(task)
+
+                return None
+
+        qviz.setFeatures(features)  
+        return {'features': features, 'task': task.description()}
+
+
+
+
+
+
+
+
+
     
 
 ####################################################################
@@ -321,8 +329,3 @@ timestamps = [start_date + i * time_delta for i in range(1440)]
 timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in timestamps]
 
 tt = qviz(False)
-task1 = QgsTask.fromFunction('Fetch data', fetch_data,
-
-                             on_finished=completed, timestamps=timestamps, qviz = tt)
-
-QgsApplication.taskManager().addTask(task1)
