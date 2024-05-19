@@ -3,10 +3,54 @@ from pymeos import *
 from datetime import datetime, timedelta
 import time
 
+import psycopg2
 
 
 PERCENTAGE_OF_SHIPS = 0.01 # To not overload the memory, we only take a percentage of the ships in the database
 TIME_DELTA = 48 # 48 ticks of data are loaded at once
+
+
+class ParallelTask(QgsTask):
+    """
+    This class is used to fetch the data from the MobilityDB database in parallel
+    using Qgis's threads. This allows to keep the UI responsive while the data is being fetched.
+    """
+    def __init__(self, description, current_frame, project_title,db,mmsi_list, pstart, pend, finished_fnc,
+                 failed_fnc):
+        super(ParallelTask, self).__init__(description, QgsTask.CanCancel)
+        self.current_frame = current_frame
+        self.project_title = project_title
+        self.db = db
+        self.mmsi_list = mmsi_list
+        self.pstart = pstart
+        self.pend = pend
+        self.finished_fnc = finished_fnc
+        self.failed_fnc = failed_fnc
+        self.result_params = None
+        self.error_msg = None
+
+    def finished(self, result):
+        if result:
+            self.finished_fnc(self.result_params)
+        else:
+            self.failed_fnc(self.error_msg)
+
+    def run(self):
+        try:
+            features = self.db.getTrajectories(self.mmsi_list, self.pstart, self.pend)
+            
+            self.result_params = {
+                'pymeos_data_batch': features,
+            }
+        except psycopg2.Error as e:
+            self.error_msg = str(e)
+            return False
+        except ValueError as e:
+            self.error_msg = str(e)
+            return False
+        return True
+
+
 
 class mobDB:
     """
@@ -33,16 +77,23 @@ class mobDB:
             print(e)
 
     def getMMSI(self, percentage=0.001):
+        """
+        Fetch the MMSI of the ships in the database.
+        """
         return self.mmsi_list[:int(len(self.mmsi_list)*percentage)]
 
     def getTrajectories(self, mmsi_list, pstart, pend):
+        """
+        Fetch the trajectories of the ships in the mmsi_list between the start and end timestamps.
+        """
         try:
             rows={}
             for mmsi in mmsi_list:
                 ship_mmsi = mmsi[0]
                 self.cursor.execute(f"SELECT attime(a.trajectory::tgeompoint,span('{pstart}'::timestamptz, '{pend}'::timestamptz, true, true))::tgeompoint FROM public.PyMEOS_demo as a WHERE a.MMSI = {ship_mmsi} ;")
                 trajectory = self.cursor.fetchone()
-                rows[mmsi] = trajectory[0]
+                if trajectory[0]:
+                    rows[mmsi] = trajectory[0]
 
             return rows
         except Exception as e:
@@ -50,12 +101,29 @@ class mobDB:
 
 
     def close(self):
+        """
+        Close the connection to the MobilityDB database.
+        """
         self.cursor.close()
         self.connection.close()
 
 
-class pyMeos_data:
+class Data_in_memory:
+    """
+    MVC : This is the model
+
+    This class plays the role of the model in the MVC pattern. 
+    It is used to store the data in memory and to create the link between
+    the QGIS UI (temporal Controller/Vector Layer) and the MobilityDB database.
+    
+    """
     def __init__(self):
+        self.task_manager = QgsApplication.taskManager()
+        self.db = mobDB()
+        pymeos_initialize()
+        
+        self.mmsi_list = self.db.getMMSI(PERCENTAGE_OF_SHIPS)
+        
         self.current_batch = []
         self.future_batch = []
         self.steps = 1440
@@ -66,71 +134,88 @@ class pyMeos_data:
         self.timestamps = [start_date + i * time_delta for i in range(self.steps)]
         self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
 
+        self.fetchMobilityDB(0, self.mmsi_list, self.timestamps[0], self.timestamps[TIME_DELTA-1])
 
-    def fetchMobilityDB(self, mmsi_list, pstart, pend):
-        task1 = QgsTask.fromFunction('Fetch data', fetch_data,
 
-                             on_finished=completed, timestamps=timestamps, qviz = tt)
+    def fetchMobilityDB(self,current_frame, mmsi_list, pstart, pend):
+        task = ParallelTask(f"Next batch is being requested: {current_frame}", current_frame,
+                                     "qViz",self.db,mmsi_list, pstart, pend, self.finish, self.raise_error)
 
-        QgsApplication.taskManager().addTask(task1)        
+        self.task_manager.addTask(task)        
 
     def updateBatch(self, frame_number):
-        self.current_batch = self.future_batch
+        #self.current_batch = self.future_batch
         pass
 
-    def fetchNextBatch(self, frame_number):
-        # Has to create a new Qgis task 
-        #self.future_batch = Qgis task
+    def fetchNextBatch(self, current_frame):
         pass
+
+
+    def finish(self, params):
+        """
+        Function called when the task to fetch the data from the MobilityDB database is finished.
+        """
+        self.current_batch = params['pymeos_data_batch']
+
+
+    def raise_error(self, msg):
+        """
+        Function called when the task to fetch the data from the MobilityDB database failed.
+        """
+        if msg:
+            self.log("Error: " + msg)
+        else:
+            self.log("Unknown error")
+
 
     def setNextBatch(self, batch):
         self.setNextBatch = batch
 
-    def getPoints(self, frame_number):
+    def generate_qgis_points(self, frame_number, vlayer_fields):
+        """
+        Provides the UI with the features to display on the map for the Timestamp associated
+        to the given frame number.
+
+        """
         key =  self.timestamps_strings[frame_number]
-        # iterate over the output_data which is a dictionnary
-        features= self.current_batch[key] 
-        self.qgis_fields_list = []
+ 
+        qgis_fields_list = []
         
         datetime_obj = QDateTime.fromString(key, "yyyy-MM-dd HH:mm:ss")
         
-        for i in range(len(features)):
-            if len(features[i]) > 0:
-                feat = QgsFeature(self.vlayer.fields())   # Create feature
+        for mmsi in self.mmsi_list:
+            try :
+                val = self.current_batch[mmsi].value_at_timestamp(self.timestamps[frame_number])
+                feat = QgsFeature(vlayer_fields)   # Create feature
                 feat.setAttributes([datetime_obj])  # Set its attributes
-                x,y = features[i]
+                x,y = val.x, val.y
                 geom = QgsGeometry.fromPointXY(QgsPointXY(x,y)) # Create geometry from valueAtTimestamp
                 feat.setGeometry(geom) # Set its geometry
-                self.qgis_fields_list.append(feat)
+                qgis_fields_list.append(feat)
 
-        print(f"Added {len(features)} features to timestamp {key}")
-        return self.qgis_fields_list
+            except Exception as e: 
+                continue
+                
+        print(f"Added {len(qgis_fields_list)} features to timestamp {key}")
+        return qgis_fields_list
 
 class qviz:
     """
-    Main class used to create the temporal view and visualize the trajectories of ships.
+    MVC : This is the controller
+
+    This class plays the role of the controller in the MVC pattern.
+    It is used to manage the user interaction with the View, which is the QGIS UI.
+    
+    It handles the interactions with both the Temporal Controller and the Vector Layer.
     """
     def __init__(self):
-        self.createPointsLayer()
+        self.createVectorLayer()
         self.canvas = iface.mapCanvas()
         self.temporalController = self.canvas.temporalController()
-
         frame_rate = 30
         self.temporalController.setFramesPerSecond(frame_rate)
 
-        # Define the new start and end dates
-        #new_start_date = QDateTime.fromString("2023-06-01T00:00:00", Qt.ISODate)
-        #new_end_date = QDateTime.fromString("2023-06-01T23:59:59", Qt.ISODate)
-
-        # Create a QgsDateTimeRange object with the new start and end dates
-        #new_temporal_range = QgsDateTimeRange(new_start_date, new_end_date)
-
-        # Emit the updateTemporalRange signal with the new temporal range
-        #self.temporalController.updateTemporalRange.emit(new_temporal_range)
-
-       
-
-        self.data =  pyMeos_data()
+        self.data =  Data_in_memory()
 
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         #self.generatePoints()
@@ -141,25 +226,6 @@ class qviz:
         self.number_of_points_stored_in_layer = []
 
 
-    def getFeatures(self):
-        db  = mobDB()
-        percentage = PERCENTAGE_OF_SHIPS    
-
-        pymeos_initialize()
-        mmsi_list = db.getMMSI(percentage)
-        rows = db.getTrajectories(mmsi_list, "2023-06-01 00:00:00", "2023-06-01 05:00:00")
-
-        features = {str(dt): [] for dt in self.timestamps}
-
-        for mmsi in mmsi_list:
-            for datetime in self.timestamps:
-                try :
-                    val = rows[mmsi].value_at_timestamp(datetime)
-                    features[datetime.strftime('%Y-%m-%d %H:%M:%S')].append((val.x, val.y))
-                except Exception as e: 
-                    val = None
-        return features
-
 
     def get_stats(self):
         pass
@@ -167,11 +233,12 @@ class qviz:
     
     def on_new_frame(self):
         """
-        Function called every time temporal controller frame is changed. It is used to update the features displayed on the map.
+        Function called every time the temporal controller frame is changed. 
+        It updates the content of the vector layer displayed on the map.
         """
 
         curr_frame = self.temporalController.currentFrameNumber()
-
+        print(curr_frame)
         if curr_frame % TIME_DELTA == 0:
             self.data.updateBatch(curr_frame) # removes previous batch and switches to the new one
             self.data.fetchNextBatch(curr_frame)            
@@ -182,7 +249,10 @@ class qviz:
         
     
     
-    def createPointsLayer(self):
+    def createVectorLayer(self):
+        """
+        Creates a vector layer in memory to store the points to be displayed on the map.
+        """
         self.vlayer = QgsVectorLayer("Point", "MobilityBD Data", "memory")
         pr = self.vlayer.dataProvider()
         pr.addAttributes([QgsField("time", QVariant.DateTime)])
@@ -198,11 +268,14 @@ class qviz:
   
 
     def addPoints(self, currentFrameNumber=0):
+        """
+        Adds the points to the vector layer to be displayed for the current frame on the map.
+        """
         #self.updateTimestamps()
         #self.features.update(self.timestamps)
         now= time.time()
 
-        self.qgis_fields_list = self.data.getPoints(currentFrameNumber)
+        self.qgis_fields_list = self.data.generate_qgis_points(currentFrameNumber, self.vlayer.fields())
         
         self.vlayer.startEditing()
         self.vlayer.addFeatures(self.qgis_fields_list) # Add list of features to vlayer
@@ -225,4 +298,4 @@ class qviz:
 
 
 
-tt = qviz(False)
+tt = qviz()
