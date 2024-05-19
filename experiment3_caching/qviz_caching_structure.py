@@ -6,7 +6,7 @@ import time
 import psycopg2
 
 
-PERCENTAGE_OF_SHIPS = 0.01 # To not overload the memory, we only take a percentage of the ships in the database
+PERCENTAGE_OF_SHIPS = 0.5 # To not overload the memory, we only take a percentage of the ships in the database
 TIME_DELTA = 48 # 48 ticks of data are loaded at once
 
 
@@ -15,10 +15,11 @@ class ParallelTask(QgsTask):
     This class is used to fetch the data from the MobilityDB database in parallel
     using Qgis's threads. This allows to keep the UI responsive while the data is being fetched.
     """
-    def __init__(self, description, current_frame, project_title,db,mmsi_list, pstart, pend, finished_fnc,
+    def __init__(self, description, current_frame, delta_key, project_title,db,mmsi_list, pstart, pend, finished_fnc,
                  failed_fnc):
         super(ParallelTask, self).__init__(description, QgsTask.CanCancel)
         self.current_frame = current_frame
+        self.delta_key = delta_key
         self.project_title = project_title
         self.db = db
         self.mmsi_list = mmsi_list
@@ -41,6 +42,7 @@ class ParallelTask(QgsTask):
             
             self.result_params = {
                 'pymeos_data_batch': features,
+                'delta_key': self.delta_key,
             }
         except psycopg2.Error as e:
             self.error_msg = str(e)
@@ -113,7 +115,7 @@ class Data_in_memory:
     MVC : This is the model
 
     This class plays the role of the model in the MVC pattern. 
-    It is used to store the data in memory and to create the link between
+    It is used to store the data in memory and to create the link betwseen
     the QGIS UI (temporal Controller/Vector Layer) and the MobilityDB database.
     
     """
@@ -129,33 +131,38 @@ class Data_in_memory:
         self.steps = 1440
 
         start_date = datetime(2023, 6, 1, 0, 0, 0)
-        end_date = datetime(2023, 6, 1, 23, 59, 59)
         time_delta = timedelta(minutes=1)
         self.timestamps = [start_date + i * time_delta for i in range(self.steps)]
         self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
 
-        self.fetchMobilityDB(0, self.mmsi_list, self.timestamps[0], self.timestamps[TIME_DELTA-1])
+        self.buffer = {}
+
+        
+        self.fetchMobilityDB(0, self.timestamps_strings[0], self.mmsi_list, self.timestamps[0], self.timestamps[TIME_DELTA-1])
 
 
-    def fetchMobilityDB(self,current_frame, mmsi_list, pstart, pend):
-        task = ParallelTask(f"Next batch is being requested: {current_frame}", current_frame,
+    def fetchMobilityDB(self,current_frame,delta_key, mmsi_list, pstart, pend):
+        task = ParallelTask(f"Next batch is being requested: {current_frame}", current_frame,delta_key,
                                      "qViz",self.db,mmsi_list, pstart, pend, self.finish, self.raise_error)
 
         self.task_manager.addTask(task)        
 
-    def updateBatch(self, frame_number):
-        #self.current_batch = self.future_batch
-        pass
+    
 
     def fetchNextBatch(self, current_frame):
-        pass
+        delta_i = current_frame + TIME_DELTA         
+        delta_key = self.timestamps_strings[delta_i]
+        if delta_key not in self.buffer:
+            delta_i_plus_one = delta_i + TIME_DELTA - 1
+            self.fetchMobilityDB(delta_i, delta_key, self.mmsi_list, self.timestamps[delta_i], self.timestamps[delta_i_plus_one])
 
 
     def finish(self, params):
         """
         Function called when the task to fetch the data from the MobilityDB database is finished.
         """
-        self.current_batch = params['pymeos_data_batch']
+        # check delta_key exists in buffer        
+        self.buffer[params['delta_key']] = params['pymeos_data_batch']
 
 
     def raise_error(self, msg):
@@ -171,7 +178,7 @@ class Data_in_memory:
     def setNextBatch(self, batch):
         self.setNextBatch = batch
 
-    def generate_qgis_points(self, frame_number, vlayer_fields):
+    def generate_qgis_points(self,current_time_delta, frame_number, vlayer_fields):
         """
         Provides the UI with the features to display on the map for the Timestamp associated
         to the given frame number.
@@ -183,9 +190,11 @@ class Data_in_memory:
         
         datetime_obj = QDateTime.fromString(key, "yyyy-MM-dd HH:mm:ss")
         
+        current_batch = self.buffer[self.timestamps_strings[current_time_delta]]
+
         for mmsi in self.mmsi_list:
             try :
-                val = self.current_batch[mmsi].value_at_timestamp(self.timestamps[frame_number])
+                val = current_batch[mmsi].value_at_timestamp(self.timestamps[frame_number])
                 feat = QgsFeature(vlayer_fields)   # Create feature
                 feat.setAttributes([datetime_obj])  # Set its attributes
                 x,y = val.x, val.y
@@ -216,7 +225,8 @@ class qviz:
         self.temporalController.setFramesPerSecond(frame_rate)
 
         self.data =  Data_in_memory()
-
+        self.current_time_delta = 0
+        self.previous_frame = 0
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         #self.generatePoints()
         #self.addPoints()
@@ -240,8 +250,15 @@ class qviz:
         curr_frame = self.temporalController.currentFrameNumber()
         print(curr_frame)
         if curr_frame % TIME_DELTA == 0:
-            self.data.updateBatch(curr_frame) # removes previous batch and switches to the new one
+            if self.previous_frame-curr_frame > 0:
+                # Going back in time
+                self.current_time_delta = curr_frame - TIME_DELTA
+            else:
+                # Going forward in time
+                self.current_time_delta = curr_frame
+            
             self.data.fetchNextBatch(curr_frame)            
+            self.previous_frame = curr_frame
             #self.features = self.getFeatures()
 
         self.removePoints() # Deletes all previous points
@@ -275,7 +292,7 @@ class qviz:
         #self.features.update(self.timestamps)
         now= time.time()
 
-        self.qgis_fields_list = self.data.generate_qgis_points(currentFrameNumber, self.vlayer.fields())
+        self.qgis_fields_list = self.data.generate_qgis_points(self.current_time_delta,currentFrameNumber, self.vlayer.fields())
         
         self.vlayer.startEditing()
         self.vlayer.addFeatures(self.qgis_fields_list) # Add list of features to vlayer
