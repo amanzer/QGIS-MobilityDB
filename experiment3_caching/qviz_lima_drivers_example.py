@@ -30,17 +30,17 @@ class Data_in_memory:
         self.db = mobDB()
         pymeos_initialize()
         
-        self.mmsi_list = self.db.getMMSI(PERCENTAGE_OF_SHIPS)
+        self.mmsi_list = ["00920923"]
         
         self.steps = 1440
 
-        start_date = datetime(2023, 6, 1, 0, 0, 0)
+        start_date = datetime(2017, 8, 31, 0, 0, 0)
         time_delta = timedelta(minutes=1)
         self.timestamps = [start_date + i * time_delta for i in range(self.steps)]
         self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
 
         self.buffer = {}
-
+        self.buffer_params = []
         self.fillBuffer()
       
 
@@ -60,6 +60,7 @@ class Data_in_memory:
         """
         # check delta_key exists in buffer        
         self.buffer = params['buffer']
+        self.buffer_params = params['buffer_params']
 
 
     def raise_error(self, msg):
@@ -146,6 +147,7 @@ class ParallelTask(QgsTask):
     def run(self):
         try:
             deltas = {}
+            buffer_params = []
             for i in range( (math.ceil(self.steps/ TIME_DELTA)) ):
                 delta_i = i * TIME_DELTA         
                 delta_i_plus_one = delta_i + TIME_DELTA
@@ -157,9 +159,11 @@ class ParallelTask(QgsTask):
                 key = self.timestamps_strings[delta_i]
 
                 deltas[key] = self.db.getTrajectories(self.mmsi_list, pstart, pend)
-            
+                buffer_params.append((delta_i, delta_i_plus_one, pstart, pend, key))
+
             self.result_params = {
                 'buffer': deltas,
+                'buffer_params': buffer_params,
             }
         except psycopg2.Error as e:
             self.error_msg = str(e)
@@ -180,7 +184,7 @@ class mobDB:
         connection_params = {
         "host": "localhost",
         "port": 5432,
-        "dbname": "mobilitydb",
+        "dbname": "lima",
         "user": "postgres",
         "password": "postgres"
         }
@@ -190,7 +194,7 @@ class mobDB:
 
             self.cursor = self.connection.cursor()
 
-            self.cursor.execute(f"SELECT MMSI FROM public.PyMEOS_demo;")
+            self.cursor.execute(f"SELECT driver_id FROM public.lima_drivers;")
             self.mmsi_list = self.cursor.fetchall()
         except Exception as e:
             print(e)
@@ -209,7 +213,7 @@ class mobDB:
             rows={}
             for mmsi in mmsi_list:
                 ship_mmsi = mmsi[0]
-                self.cursor.execute(f"SELECT attime(a.trajectory::tgeompoint,span('{pstart}'::timestamptz, '{pend}'::timestamptz, true, true))::tgeompoint FROM public.PyMEOS_demo as a WHERE a.MMSI = {ship_mmsi} ;")
+                self.cursor.execute(f"SELECT attime(a.trajectory::tgeompoint,span('{pstart}'::timestamptz, '{pend}'::timestamptz, true, true))::tgeompoint FROM public.lima_drivers as a WHERE a.driver_id = '{ship_mmsi}' ;")
                 trajectory = self.cursor.fetchone()
                 if trajectory[0]:
                     rows[mmsi] = trajectory[0]
