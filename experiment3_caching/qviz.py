@@ -7,7 +7,7 @@ import psycopg2
 
 
 PERCENTAGE_OF_SHIPS = 0.01 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA = 48 # 48 ticks of data are loaded at once
+TIME_DELTA = 24 # 48 ticks of data are loaded at once
 
 
 class Data_in_memory:
