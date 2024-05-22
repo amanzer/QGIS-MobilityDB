@@ -5,10 +5,12 @@ import time
 import math
 
 import psycopg2
+from collections import deque
 
 
 PERCENTAGE_OF_SHIPS = 0.01 # To not overload the memory, we only take a percentage of the ships in the database
 TIME_DELTA = 48 # 48 ticks of data are loaded at once
+LEN_DEQUEUE = 10 # Length of the dequeue to calculate the average FPS
 
 
 class Data_in_memory:
@@ -97,6 +99,7 @@ class Data_in_memory:
                     now_value_at_ts = time.time()
                     val = current_batch[mmsi].value_at_timestamp(self.timestamps[frame_number])
                     self.STATS_value_at_timestamp.append(time.time()-now_value_at_ts)
+                    
                     now_qgis_features = time.time()
                     feat = QgsFeature(vlayer_fields)   # Create feature
                     feat.setAttributes([datetime_obj])  # Set its attributes
@@ -104,7 +107,7 @@ class Data_in_memory:
                     geom = QgsGeometry.fromPointXY(QgsPointXY(x,y)) # Create geometry from valueAtTimestamp
                     feat.setGeometry(geom) # Set its geometry
                     qgis_fields_list.append(feat)
-                    #self.STATS_qgis_features.append(time.time()-now_qgis_features)
+                    self.STATS_qgis_features.append(time.time()-now_qgis_features)
                 except Exception as e: 
                     continue
         except Exception as e:
@@ -251,6 +254,8 @@ class qviz:
         self.data =  Data_in_memory()
         self.current_time_delta = 0
         self.last_frame = 0
+        self.dq_FPS = deque(maxlen=LEN_DEQUEUE)
+        self.dq_FPS.append(1)
         #self.on_new_frame()
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         
@@ -269,15 +274,32 @@ class qviz:
         print(f"Average time to get value at timestamp: {avg_value_at_timestamp}s")
         print(f"Max time to get value at timestamp: {max(self.data.STATS_value_at_timestamp)}s")
         print(f"Min time to get value at timestamp: {min(self.data.STATS_value_at_timestamp)}s")
-        #print(f"Average time to create QGIS features: {avg_qgis_features}")
+        
 
+        print(f"Update features times: {sum(self.update_features_times) / len(self.update_features_times)}")
+        print(f"On new frame times: {sum(self.on_new_frame_times) / len(self.on_new_frame_times)}, number of times it was called {len(self.on_new_frame_times)}")
     
+
+    def updateFrameRate(self, time):
+        """
+        Updates the frame rate of the temporal controller.
+        """
+        self.dq_FPS.append(time)
+        avg_frame_time = (sum(self.dq_FPS)/LEN_DEQUEUE)
+        print(avg_frame_time)
+        print(1 / avg_frame_time) 
+        fps = min(30, (1 / avg_frame_time))
+
+
+        self.temporalController.setFramesPerSecond(fps)
+
+
     def on_new_frame(self):
         """
         Function called every time the temporal controller frame is changed. 
         It updates the content of the vector layer displayed on the map.
         """
-
+        now = time.time()
         curr_frame = self.temporalController.currentFrameNumber()
         print(curr_frame)
 
@@ -304,6 +326,9 @@ class qviz:
         self.removePoints() # Deletes all previous points
         self.addPoints(curr_frame)
         print(direction)
+        t = time.time()-now
+        self.on_new_frame_times.append(t)
+        self.updateFrameRate(t)
         
     
     
@@ -331,16 +356,16 @@ class qviz:
         """
         #self.updateTimestamps()
         #self.features.update(self.timestamps)
-        #now= time.time()
+        now= time.time()
 
         self.qgis_fields_list = self.data.generate_qgis_points(self.current_time_delta,currentFrameNumber, self.vlayer.fields())
         
-        # TODO : Control FPS depending on the number of points displayed
+        
         self.vlayer.startEditing()
         self.vlayer.addFeatures(self.qgis_fields_list) # Add list of features to vlayer
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
-        #self.update_features_times.append(time.time()-now)
+        self.update_features_times.append(time.time()-now)
         self.number_of_points_stored_in_layer.append(len(self.qgis_fields_list))
 
     def removePoints(self):
