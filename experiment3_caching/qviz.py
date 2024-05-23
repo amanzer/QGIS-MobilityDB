@@ -2,12 +2,15 @@ from pymeos.db.psycopg import MobilityDB
 from pymeos import *
 from datetime import datetime, timedelta
 import time
+import math
 
 import psycopg2
+from collections import deque
 
 
 PERCENTAGE_OF_SHIPS = 0.01 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA = 24 # 48 ticks of data are loaded at once
+TIME_DELTA = 48 # Parameter that defines the size of the batch of data to fetch from the MobilityDB database
+LEN_DEQUEUE = 10 # Length of the dequeue to calculate the average FPS
 
 
 class Data_in_memory:
@@ -31,8 +34,6 @@ class Data_in_memory:
         
         self.mmsi_list = self.db.getMMSI(PERCENTAGE_OF_SHIPS)
         
-        self.current_batch = []
-        self.future_batch = []
         self.steps = 1440
 
         start_date = datetime(2023, 6, 1, 0, 0, 0)
@@ -98,6 +99,7 @@ class Data_in_memory:
         
         datetime_obj = QDateTime.fromString(key, "yyyy-MM-dd HH:mm:ss")
         try: 
+            # Get the subsets of the Tpoints for the current time delta 
             current_batch = self.buffer[time_delta_key]
             
             for mmsi in self.mmsi_list:
@@ -121,6 +123,10 @@ class Data_in_memory:
         
         print(f"Added {len(qgis_fields_list)} features to timestamp {key}")
         return qgis_fields_list
+
+    def log(self, msg):
+        QgsMessageLog.logMessage(msg, 'qViz', level=Qgis.Info)
+
 
 
 class ParallelTask(QgsTask):
@@ -150,6 +156,10 @@ class ParallelTask(QgsTask):
             self.failed_fnc(self.error_msg)
 
     def run(self):
+        """
+        Function that is executed in parallel to fetch all the subsets of Tpoints from the MobilityDB database,
+        for the given time delta.
+        """
         try:
             features = self.db.getTrajectories(self.mmsi_list, self.pstart, self.pend)
             
@@ -248,6 +258,10 @@ class qviz:
         self.current_time_delta = 0
         self.last_frame = 0
         #self.on_new_frame()
+        
+        self.dq_FPS = deque(maxlen=LEN_DEQUEUE)
+        self.dq_FPS.append(1)
+
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         
         # To start we already fetch the current the next batch of data
@@ -263,14 +277,28 @@ class qviz:
         """
         Returns the statistics of the time taken by each function.
         """
-        avg_value_at_timestamp = sum(self.data.STATS_value_at_timestamp)/len(self.data.STATS_value_at_timestamp)
-        #avg_qgis_features = sum(self.data.STATS_qgis_features)/len(self.data.STATS_qgis_features)
-        # show average in seconds
-        print(f"Number of times value_at_timestamp was called: {len(self.data.STATS_value_at_timestamp)}")
-        print(f"Average time to get value at timestamp: {avg_value_at_timestamp}s")
-        print(f"Max time to get value at timestamp: {max(self.data.STATS_value_at_timestamp)}s")
-        print(f"Min time to get value at timestamp: {min(self.data.STATS_value_at_timestamp)}s")
-        #print(f"Average time to create QGIS features: {avg_qgis_features}")
+        # avg_value_at_timestamp = sum(self.data.STATS_value_at_timestamp)/len(self.data.STATS_value_at_timestamp)
+        # #avg_qgis_features = sum(self.data.STATS_qgis_features)/len(self.data.STATS_qgis_features)
+        # # show average in seconds
+        # print(f"Number of times value_at_timestamp was called: {len(self.data.STATS_value_at_timestamp)}")
+        # print(f"Average time to get value at timestamp: {avg_value_at_timestamp}s")
+        # print(f"Max time to get value at timestamp: {max(self.data.STATS_value_at_timestamp)}s")
+        # print(f"Min time to get value at timestamp: {min(self.data.STATS_value_at_timestamp)}s")
+        # #print(f"Average time to create QGIS features: {avg_qgis_features}")
+        pass
+
+    def updateFrameRate(self, time):
+        """
+        Updates the frame rate of the temporal controller.
+        """
+        self.dq_FPS.append(time)
+        avg_frame_time = (sum(self.dq_FPS)/LEN_DEQUEUE)
+        print(avg_frame_time)
+        print(1 / avg_frame_time) 
+        fps = min(30, (1 / avg_frame_time))
+
+
+        self.temporalController.setFramesPerSecond(fps)
 
     
     def on_new_frame(self):
@@ -278,7 +306,7 @@ class qviz:
         Function called every time the temporal controller frame is changed. 
         It updates the content of the vector layer displayed on the map.
         """
-
+        now = time.time()
         curr_frame = self.temporalController.currentFrameNumber()
         print(curr_frame)
 
@@ -306,7 +334,10 @@ class qviz:
         self.removePoints() # Deletes all previous points
         self.addPoints(curr_frame)
         print(direction)
-        
+        print(direction)
+        t = time.time()-now
+        self.on_new_frame_times.append(t)
+        self.updateFrameRate(t)
     
     
     def createVectorLayer(self):
