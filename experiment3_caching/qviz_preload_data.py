@@ -9,7 +9,7 @@ from collections import deque
 
 
 PERCENTAGE_OF_SHIPS = 0.01 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA = 48 # 48 ticks of data are loaded at once
+TIME_DELTA = 48 # Parameter that defines the size of the subsets of Tpoints
 LEN_DEQUEUE = 10 # Length of the dequeue to calculate the average FPS
 
 
@@ -24,8 +24,8 @@ class Data_in_memory:
     """
     def __init__(self):
         #Metrics to measure 
-        self.STATS_value_at_timestamp = [] # Time to get the value for a timestamp by pymeos
-        self.STATS_qgis_features = [] # Time to create the QGIS features    
+        #self.STATS_value_at_timestamp = [] # Time to get the value for a timestamp by pymeos
+        #self.STATS_qgis_features = [] # Time to create the QGIS features    
 
 
         self.task_manager = QgsApplication.taskManager()
@@ -91,23 +91,25 @@ class Data_in_memory:
         qgis_fields_list = []
         
         datetime_obj = QDateTime.fromString(key, "yyyy-MM-dd HH:mm:ss")
+        now_value_at_ts = time.time()
         try: 
+            # Get the subsets of the Tpoints for the current time delta
             current_batch = self.buffer[time_delta_key]
             
             for mmsi in self.mmsi_list:
                 try :
-                    now_value_at_ts = time.time()
-                    val = current_batch[mmsi].value_at_timestamp(self.timestamps[frame_number])
-                    self.STATS_value_at_timestamp.append(time.time()-now_value_at_ts)
                     
-                    now_qgis_features = time.time()
+                    val = current_batch[mmsi].value_at_timestamp(self.timestamps[frame_number])
+                    #val_times.append(time.time()-now_value_at_ts)
+                    
+                    #now_qgis_features = time.time()
                     feat = QgsFeature(vlayer_fields)   # Create feature
                     feat.setAttributes([datetime_obj])  # Set its attributes
                     x,y = val.x, val.y
                     geom = QgsGeometry.fromPointXY(QgsPointXY(x,y)) # Create geometry from valueAtTimestamp
                     feat.setGeometry(geom) # Set its geometry
                     qgis_fields_list.append(feat)
-                    self.STATS_qgis_features.append(time.time()-now_qgis_features)
+                    #self.STATS_qgis_features.append(time.time()-now_qgis_features)
                 except Exception as e: 
                     continue
         except Exception as e:
@@ -115,6 +117,7 @@ class Data_in_memory:
         
         
         print(f"Added {len(qgis_fields_list)} features to timestamp {key}")
+        print(f"time for value_at_timestamp + QgsFeature generation : {time.time() - now_value_at_ts}")
         return qgis_fields_list
     
     def log(self, msg):
@@ -147,6 +150,10 @@ class ParallelTask(QgsTask):
             self.failed_fnc(self.error_msg)
 
     def run(self):
+        """
+        Function that is executed in parallel to fetch all the subsets of Tpoints from the MobilityDB database,
+        and creates a hashmap for all time deltas.
+        """
         try:
             deltas = {}
             for i in range( (math.ceil(self.steps/ TIME_DELTA)) ):
@@ -267,18 +274,18 @@ class qviz:
         """
         Returns the statistics of the time taken by each function.
         """
-        avg_value_at_timestamp = sum(self.data.STATS_value_at_timestamp)/len(self.data.STATS_value_at_timestamp)
-        #avg_qgis_features = sum(self.data.STATS_qgis_features)/len(self.data.STATS_qgis_features)
-        # show average in seconds
-        print(f"Number of times value_at_timestamp was called: {len(self.data.STATS_value_at_timestamp)}")
-        print(f"Average time to get value at timestamp: {avg_value_at_timestamp}s")
-        print(f"Max time to get value at timestamp: {max(self.data.STATS_value_at_timestamp)}s")
-        print(f"Min time to get value at timestamp: {min(self.data.STATS_value_at_timestamp)}s")
+        # avg_value_at_timestamp = sum(self.data.STATS_value_at_timestamp)/len(self.data.STATS_value_at_timestamp)
+        # #avg_qgis_features = sum(self.data.STATS_qgis_features)/len(self.data.STATS_qgis_features)
+        # # show average in seconds
+        # print(f"Number of times value_at_timestamp was called: {len(self.data.STATS_value_at_timestamp)}")
+        # print(f"Average time to get value at timestamp: {avg_value_at_timestamp}s")
+        # print(f"Max time to get value at timestamp: {max(self.data.STATS_value_at_timestamp)}s")
+        # print(f"Min time to get value at timestamp: {min(self.data.STATS_value_at_timestamp)}s")
         
 
-        print(f"Update features times: {sum(self.update_features_times) / len(self.update_features_times)}")
-        print(f"On new frame times: {sum(self.on_new_frame_times) / len(self.on_new_frame_times)}, number of times it was called {len(self.on_new_frame_times)}")
-    
+        # print(f"Update features times: {sum(self.update_features_times) / len(self.update_features_times)}")
+        # print(f"On new frame times: {sum(self.on_new_frame_times) / len(self.on_new_frame_times)}, number of times it was called {len(self.on_new_frame_times)}")
+        pass
 
     def updateFrameRate(self, time):
         """
@@ -286,10 +293,10 @@ class qviz:
         """
         self.dq_FPS.append(time)
         avg_frame_time = (sum(self.dq_FPS)/LEN_DEQUEUE)
-        print(avg_frame_time)
-        print(1 / avg_frame_time) 
-        fps = min(30, (1 / avg_frame_time))
-
+        print(f"Average time for On_new_frame : {avg_frame_time}")
+        optimal_fps = 1 / avg_frame_time
+        print(f"Optimal FPS : {optimal_fps} (1/avg_frame_time)") 
+        fps = min(30, optimal_fps)
 
         self.temporalController.setFramesPerSecond(fps)
 
@@ -301,7 +308,7 @@ class qviz:
         """
         now = time.time()
         curr_frame = self.temporalController.currentFrameNumber()
-        print(curr_frame)
+        print(f"\n\n\n\n\n\ncurr_frame : {curr_frame}")
 
         if self.last_frame - curr_frame > 0:
             direction = "back" 
