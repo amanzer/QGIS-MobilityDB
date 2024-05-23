@@ -98,6 +98,7 @@ class Data_in_memory:
         qgis_fields_list = []
         
         datetime_obj = QDateTime.fromString(key, "yyyy-MM-dd HH:mm:ss")
+        now_value_at_ts_qgs_feature = time.time()
         try: 
             # Get the subsets of the Tpoints for the current time delta 
             current_batch = self.buffer[time_delta_key]
@@ -122,6 +123,7 @@ class Data_in_memory:
         
         
         print(f"Added {len(qgis_fields_list)} features to timestamp {key}")
+        print(f"time for value_at_timestamp + QgsFeature generation : {time.time() - now_value_at_ts_qgs_feature}")
         return qgis_fields_list
 
     def log(self, msg):
@@ -293,9 +295,10 @@ class qviz:
         """
         self.dq_FPS.append(time)
         avg_frame_time = (sum(self.dq_FPS)/LEN_DEQUEUE)
-        print(avg_frame_time)
-        print(1 / avg_frame_time) 
-        fps = min(30, (1 / avg_frame_time))
+        print(f"Average time for On_new_frame : {avg_frame_time}")
+        optimal_fps = 1 / avg_frame_time
+        print(f"Optimal FPS : {optimal_fps} (FPS = 1/frame_gen_time)") 
+        fps = min(30, optimal_fps)
 
 
         self.temporalController.setFramesPerSecond(fps)
@@ -308,7 +311,7 @@ class qviz:
         """
         now = time.time()
         curr_frame = self.temporalController.currentFrameNumber()
-        print(curr_frame)
+        print(f"\n\n\n\n\n\ncurr_frame : {curr_frame}")
 
         if self.last_frame - curr_frame > 0:
             direction = "back" 
@@ -333,7 +336,6 @@ class qviz:
 
         self.removePoints() # Deletes all previous points
         self.addPoints(curr_frame)
-        print(direction)
         print(direction)
         t = time.time()-now
         self.on_new_frame_times.append(t)
