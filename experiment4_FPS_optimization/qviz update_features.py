@@ -80,12 +80,13 @@ class Data_in_memory:
 
     
 
-    def fetchNextBatch(self, current_frame):
-        delta_i = current_frame + TIME_DELTA         
-        delta_key = self.timestamps_strings[delta_i]
-        if delta_key not in self.buffer and delta_i <= self.steps - TIME_DELTA:
-            delta_i_plus_one = delta_i + TIME_DELTA 
-            self.fetchMobilityDB(delta_i, delta_key, self.mmsi_list, self.timestamps[delta_i], self.timestamps[delta_i_plus_one])
+
+    
+    def fetch_batch(self, start_frame, end_frame):
+        delta_key = self.timestamps_strings[start_frame]
+        if delta_key not in self.buffer and start_frame <= self.steps - TIME_DELTA:
+            self.fetchMobilityDB(start_frame, delta_key, self.mmsi_list, self.timestamps[start_frame], self.timestamps[end_frame])
+
 
 
     def finish(self, params):
@@ -276,10 +277,6 @@ class qviz:
     It handles the interactions with both the Temporal Controller and the Vector Layer.
     """
     def __init__(self):
-        self.on_new_frame_times = []
-        self.removePoints_times = []
-        self.update_features_times = []
-        self.number_of_points_stored_in_layer = []    
 
         self.createVectorLayer()
         self.canvas = iface.mapCanvas()
@@ -294,16 +291,23 @@ class qviz:
         #self.on_new_frame()
         
         self.dq_FPS = deque(maxlen=LEN_DEQUEUE)
-        self.dq_FPS.append(1)
-
+        for i in range(LEN_DEQUEUE):
+            self.dq_FPS.append(0.033)
+        self.fps_record = []
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         
-        # To start we already fetch the current the next batch of data
-        self.data.fetchNextBatch(0-TIME_DELTA)
-        self.data.fetchNextBatch(0)            
-        #self.generatePoints()
-        #self.addPoints()
+        # To start we fetch the first 2 time deltas in advance
         
+        self.data.fetch_batch(0, TIME_DELTA)
+        self.data.fetch_batch(TIME_DELTA, 2*TIME_DELTA)
+
+        
+    def get_average_fps(self):
+        """
+        Returns the average FPS of the temporal controller.
+        """
+        return sum(self.fps_record)/len(self.fps_record)
+    
 
     def generate_features(self):
         """
@@ -315,20 +319,8 @@ class qviz:
         self.vlayer.addFeatures(self.features)
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
+        
 
-    def get_stats(self):
-        """
-        Returns the statistics of the time taken by each function.
-        """
-        # avg_value_at_timestamp = sum(self.data.STATS_value_at_timestamp)/len(self.data.STATS_value_at_timestamp)
-        # #avg_qgis_features = sum(self.data.STATS_qgis_features)/len(self.data.STATS_qgis_features)
-        # # show average in seconds
-        # print(f"Number of times value_at_timestamp was called: {len(self.data.STATS_value_at_timestamp)}")
-        # print(f"Average time to get value at timestamp: {avg_value_at_timestamp}s")
-        # print(f"Max time to get value at timestamp: {max(self.data.STATS_value_at_timestamp)}s")
-        # print(f"Min time to get value at timestamp: {min(self.data.STATS_value_at_timestamp)}s")
-        # #print(f"Average time to create QGIS features: {avg_qgis_features}")
-        pass
 
     def updateFrameRate(self, time):
         """
@@ -343,6 +335,7 @@ class qviz:
 
 
         self.temporalController.setFramesPerSecond(fps)
+        self.fps_record.append(fps)
 
     
     def on_new_frame(self):
@@ -360,18 +353,23 @@ class qviz:
             direction = "forward"
         self.last_frame = curr_frame
 
-        if curr_frame % TIME_DELTA == 0:
+        if curr_frame % TIME_DELTA == 0:            
+            print(f"DOTHRAKIS ARE COMING\n Time delta : {self.current_time_delta} : {self.data.timestamps_strings[self.current_time_delta]} \n Frame : {curr_frame}")
             if direction == "back":
                 # Going back in time
                 self.current_time_delta = (curr_frame - TIME_DELTA)
+                start = curr_frame-(2*TIME_DELTA)
+                end = curr_frame-TIME_DELTA
+                self.data.fetch_batch(start, end)   
+
             elif direction == "forward":
                 # Going forward in time
                 self.current_time_delta = curr_frame
-            print("DOTHRAKIS ARE COMING")
-            print(self.current_time_delta)
-            print(curr_frame)
-            print(self.data.timestamps_strings[self.current_time_delta])
-            self.data.fetchNextBatch(curr_frame)            
+                start = curr_frame+TIME_DELTA
+                end = curr_frame+(2*TIME_DELTA)
+                self.data.fetch_batch(start, end)   
+            
+                     
             self.last_frame = curr_frame
       
 
@@ -379,7 +377,6 @@ class qviz:
    
         print(direction)
         t = time.time()-now
-        self.on_new_frame_times.append(t)
         self.updateFrameRate(t)
     
 

@@ -40,7 +40,7 @@ class Data_in_memory:
         pymeos_initialize()
         
         self.mmsi_list = self.db.getMMSI(PERCENTAGE_OF_SHIPS)
-        
+        self.db.close()
         self.steps = 1440
 
         start_date = datetime(2023, 6, 1, 0, 0, 0)
@@ -53,16 +53,10 @@ class Data_in_memory:
         
         self.fetchMobilityDB(0, self.timestamps_strings[0], self.mmsi_list, self.timestamps[0], self.timestamps[TIME_DELTA-1])
 
-    def update_batch(self, current_frame):
-        try: 
-            self.current_batch = self.buffer[self.timestamps_strings[current_frame]]
-        except Exception as e:
-            print("Error in update_batch")
-            print(e)
-            pass
+
     def fetchMobilityDB(self,current_frame,delta_key, mmsi_list, pstart, pend):
         task = ParallelTask(f"Next batch is being requested: {current_frame}", current_frame,delta_key,
-                                     "qViz",self.db,mmsi_list, pstart, pend, self.timestamps, self.finish, self.raise_error)
+                                     "qViz",mmsi_list, pstart, pend, self.timestamps, self.finish, self.raise_error)
 
         self.task_manager.addTask(task)        
 
@@ -109,9 +103,10 @@ class Data_in_memory:
         datetime_obj = QDateTime.fromString(key, "yyyy-MM-dd HH:mm:ss")
         now_value_at_ts_qgs_feature = time.time()
         try: 
-    
+            # Get the subsets of the Tpoints for the current time delta 
+            current_batch = self.buffer[time_delta_key]
             
-            current_frame_coords = self.current_batch[frame_number]
+            current_frame_coords = current_batch[frame_number]
             # class 'shapely.geometry.point.Point
             #current_frame_coords is a disctionary that contains 
 
@@ -141,13 +136,12 @@ class ParallelTask(QgsTask):
     This class is used to fetch the data from the MobilityDB database in parallel
     using Qgis's threads. This allows to keep the UI responsive while the data is being fetched.
     """
-    def __init__(self, description, current_frame, delta_key, project_title,db,mmsi_list, pstart, pend, timestamps, finished_fnc,
+    def __init__(self, description, current_frame, delta_key, project_title,mmsi_list, pstart, pend, timestamps, finished_fnc,
                  failed_fnc):
         super(ParallelTask, self).__init__(description, QgsTask.CanCancel)
         self.current_frame = current_frame
         self.delta_key = delta_key
         self.project_title = project_title
-        self.db = db
         self.mmsi_list = mmsi_list
         self.pstart = pstart
         self.pend = pend
@@ -169,7 +163,8 @@ class ParallelTask(QgsTask):
         for the given time delta.
         """
         try:
-            features = self.db.getTrajectories(self.mmsi_list, self.pstart, self.pend)
+            db = mobDB()
+            features = db.getTrajectories(self.mmsi_list, self.pstart, self.pend)
 
             batch_coords = {}
             start = self.current_frame            
@@ -182,7 +177,7 @@ class ParallelTask(QgsTask):
                         batch_coords[key].append((coords.x, coords.y))
                     except Exception as e:
                         continue
-
+            db.close()
 
             self.result_params = {
                 'pymeos_data_batch': features,
@@ -277,21 +272,21 @@ class qviz:
         self.temporalController.setFramesPerSecond(frame_rate)
 
         self.data =  Data_in_memory()
+        self.data.fetch_batch(0, TIME_DELTA)
         self.current_time_delta = 0
         self.last_frame = 0
         #self.on_new_frame()
         
-        # self.dq_FPS = deque(maxlen=LEN_DEQUEUE)
-        # for i in range(LEN_DEQUEUE):
-        #     self.dq_FPS.append(0.033)
+        self.dq_FPS = deque(maxlen=LEN_DEQUEUE)
+        for i in range(LEN_DEQUEUE):
+            self.dq_FPS.append(0.033)
 
         self.fps_record = []
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         
         # To start we already fetch the current the next batch of data
-        #self.data.fetch_batch(0, TIME_DELTA)
+        
         self.data.fetch_batch(TIME_DELTA, 2*TIME_DELTA)
-        self.data.update_batch(0)
         
 
 
@@ -319,11 +314,10 @@ class qviz:
         """
         Updates the frame rate of the temporal controller.
         """
-        # self.dq_FPS.append(time)
-        # avg_frame_time = (sum(self.dq_FPS)/LEN_DEQUEUE)
-        # print(f"Average time for On_new_frame : {avg_frame_time}")
-        #optimal_fps = 1 / avg_frame_time
-        optimal_fps = 1 / time
+        self.dq_FPS.append(time)
+        avg_frame_time = (sum(self.dq_FPS)/LEN_DEQUEUE)
+        print(f"Average time for On_new_frame : {avg_frame_time}")
+        optimal_fps = 1 / avg_frame_time
         print(f"Optimal FPS : {optimal_fps} (FPS = 1/frame_gen_time)") 
         fps = min(30, optimal_fps)
 
@@ -354,7 +348,6 @@ class qviz:
                 self.current_time_delta = (curr_frame - TIME_DELTA)
                 start = curr_frame-(2*TIME_DELTA)
                 end = curr_frame-TIME_DELTA
-                self.data.update_batch(curr_frame-TIME_DELTA)
                 self.data.fetch_batch(start, end)   
 
             elif direction == "forward":
@@ -362,7 +355,6 @@ class qviz:
                 self.current_time_delta = curr_frame
                 start = curr_frame+TIME_DELTA
                 end = curr_frame+(2*TIME_DELTA)
-                self.data.update_batch(curr_frame)
                 self.data.fetch_batch(start, end)   
 
         self.removePoints() # Deletes all previous points
@@ -370,7 +362,6 @@ class qviz:
         print(direction)
         t = time.time()-now
         self.on_new_frame_times.append(t)
-        #print(f"Time for on_new_frame : {t}")
         self.updateFrameRate(t)
     
     
