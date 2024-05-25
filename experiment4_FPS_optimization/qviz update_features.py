@@ -1,7 +1,6 @@
 """
-in this version, we load the next time delta values in parallel using QGIS's 
-threads, and we ALSO do the value_at_timestamps call in it.
-
+In this version we explore the time taken by On new frame function 
+if we update existing QGIS features rather than delete/add them at each frame.
 """
 
 
@@ -13,11 +12,13 @@ import math
 
 import psycopg2
 from collections import deque
-
+from pympler import asizeof
+import gc
 
 PERCENTAGE_OF_SHIPS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
 TIME_DELTA = 48 # Parameter that defines the size of the batch of data to fetch from the MobilityDB database
-LEN_DEQUEUE = 10 # Length of the dequeue to calculate the average FPS
+LEN_DEQUEUE_FPS = 5 # Length of the dequeue to calculate the average FPS
+LEN_DEQUEUE_BUFFER = 2 # Length of the dequeue to keep the keys to keep in the buffer
 
 
 class Data_in_memory:
@@ -51,7 +52,42 @@ class Data_in_memory:
         self.buffer = {}
 
         
-        self.fetchMobilityDB(0, self.timestamps_strings[0], self.mmsi_list, self.timestamps[0], self.timestamps[TIME_DELTA-1])
+        self.keys_to_keep = deque(maxlen=LEN_DEQUEUE_BUFFER)
+
+        task = ParallelTask(f"Next batch is being requested: {0}", 0, self.timestamps_strings[0],
+                                     "qViz",self.db,self.mmsi_list, self.timestamps[0], self.timestamps[TIME_DELTA-1], self.timestamps, self.finish, self.raise_error)
+        task.taskCompleted.connect(self.second_batch)
+        self.task_manager.addTask(task)     
+
+    def second_batch(self):
+        """
+        Function called when the task to fetch the second batch of data from the MobilityDB database is finished.
+        """
+        self.fetchMobilityDB(TIME_DELTA, self.timestamps_strings[TIME_DELTA], self.mmsi_list, self.timestamps[TIME_DELTA], self.timestamps[2*TIME_DELTA])
+
+    def update_keys_to_keep(self, current_frame, direction):
+        """
+        Updates the list of keys to keep in the buffer.
+        """
+        # handle the case were the element is already in the buffer
+        key = self.timestamps_strings[current_frame]
+
+        if key in self.keys_to_keep:
+            return
+        elif direction == "forward":
+            self.keys_to_keep.append(self.timestamps_strings[current_frame])
+        elif direction == "back":
+            self.keys_to_keep.appendleft(self.timestamps_strings[current_frame])
+
+    def flush_buffer(self):
+        #remove from buffer all the keys that are not in the keys_to_keep
+        for key in list(self.buffer.keys()):
+            if key not in self.keys_to_keep:
+                del self.buffer[key]
+                gc.collect() 
+        size_in_bytes = asizeof.asizeof(self.buffer)
+        size_in_megabytes = size_in_bytes / (1024 * 1024)
+        print(f"Total size of dictionary (including referenced objects): {size_in_megabytes:.6f} MB")
 
 
     def generate_qgis_features(self, vlayer_fields):
@@ -289,19 +325,46 @@ class qviz:
         self.current_time_delta = 0
         self.last_frame = 0
         #self.on_new_frame()
-        
-        self.dq_FPS = deque(maxlen=LEN_DEQUEUE)
-        for i in range(LEN_DEQUEUE):
+        self.direction = "forward"
+        self.dq_FPS = deque(maxlen=LEN_DEQUEUE_FPS)
+        for i in range(LEN_DEQUEUE_FPS):
             self.dq_FPS.append(0.033)
+
         self.fps_record = []
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         
-        # To start we fetch the first 2 time deltas in advance
-        
-        self.data.fetch_batch(0, TIME_DELTA)
-        self.data.fetch_batch(TIME_DELTA, 2*TIME_DELTA)
+     
 
         
+    def play(self):
+        """
+        Plays the temporal controller animation.
+        """
+        if self.direction == "forward":
+            self.temporalController.playForward()
+        else:
+            self.temporalController.playBackward()
+
+    def pause(self):
+        """
+        Pauses the temporal controller animation.
+        """
+        self.temporalController.pause()
+
+
+    def get_stats(self):
+        """
+        Returns the statistics of the time taken by each function.
+        """
+        # avg_value_at_timestamp = sum(self.data.STATS_value_at_timestamp)/len(self.data.STATS_value_at_timestamp)
+        # #avg_qgis_features = sum(self.data.STATS_qgis_features)/len(self.data.STATS_qgis_features)
+        # # show average in seconds
+        # print(f"Number of times value_at_timestamp was called: {len(self.data.STATS_value_at_timestamp)}")
+        # print(f"Average time to get value at timestamp: {avg_value_at_timestamp}s")
+        # print(f"Max time to get value at timestamp: {max(self.data.STATS_value_at_timestamp)}s")
+        # print(f"Min time to get value at timestamp: {min(self.data.STATS_value_at_timestamp)}s")
+        # #print(f"Average time to create QGIS features: {avg_qgis_features}")
+        pass
     def get_average_fps(self):
         """
         Returns the average FPS of the temporal controller.
@@ -327,7 +390,7 @@ class qviz:
         Updates the frame rate of the temporal controller.
         """
         self.dq_FPS.append(time)
-        avg_frame_time = (sum(self.dq_FPS)/LEN_DEQUEUE)
+        avg_frame_time = (sum(self.dq_FPS)/LEN_DEQUEUE_FPS)
         print(f"Average time for On_new_frame : {avg_frame_time}")
         optimal_fps = 1 / avg_frame_time
         print(f"Optimal FPS : {optimal_fps} (FPS = 1/frame_gen_time)") 
@@ -348,34 +411,37 @@ class qviz:
         print(f"\n\n\n\n\n\ncurr_frame : {curr_frame}")
 
         if self.last_frame - curr_frame > 0:
-            direction = "back" 
+            self.direction = "back" 
         else:
-            direction = "forward"
+            self.direction = "forward"
         self.last_frame = curr_frame
 
         if curr_frame % TIME_DELTA == 0:            
             print(f"DOTHRAKIS ARE COMING\n Time delta : {self.current_time_delta} : {self.data.timestamps_strings[self.current_time_delta]} \n Frame : {curr_frame}")
-            if direction == "back":
+            if self.direction == "back":
                 # Going back in time
                 self.current_time_delta = (curr_frame - TIME_DELTA)
                 start = curr_frame-(2*TIME_DELTA)
                 end = curr_frame-TIME_DELTA
+                self.data.update_keys_to_keep(curr_frame-TIME_DELTA, self.direction)
+                self.data.flush_buffer()
                 self.data.fetch_batch(start, end)   
 
-            elif direction == "forward":
+            elif self.direction == "forward":
                 # Going forward in time
                 self.current_time_delta = curr_frame
                 start = curr_frame+TIME_DELTA
                 end = curr_frame+(2*TIME_DELTA)
+                self.data.update_keys_to_keep(curr_frame, self.direction)
+                self.data.flush_buffer()
                 self.data.fetch_batch(start, end)   
-            
                      
             self.last_frame = curr_frame
       
 
         self.update_positions(curr_frame)
    
-        print(direction)
+        print(self.direction)
         t = time.time()-now
         self.updateFrameRate(t)
     

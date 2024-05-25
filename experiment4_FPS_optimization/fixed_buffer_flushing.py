@@ -1,6 +1,7 @@
 """
-in this version, we load the next time delta values in parallel using QGIS's 
-threads, and we ALSO do the value_at_timestamps call in it.
+We experiment with the optimization of the FPS by using a buffer that stores
+only the data for the current time delta and the next one in order to reduce the memory used
+and accelerate access times.
 
 """
 
@@ -317,9 +318,7 @@ class qviz:
         self.fps_record = []
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         
-        # To start we already fetch the current the next batch of data
-        #self.data.fetch_batch(0, TIME_DELTA)
-        
+ 
         
     
     def play(self):
@@ -376,9 +375,7 @@ class qviz:
     def on_new_frame(self):
         """
         Function called every time the temporal controller frame is changed. 
-        It updates the content of the vector layer displayed on the map.
-        """
-        now = time.time()
+        It updates the content of the vector layer displayed on the ma
         curr_frame = self.temporalController.currentFrameNumber()
         print(f"\n\n\n\n\n\ncurr_frame : {curr_frame}")
 
