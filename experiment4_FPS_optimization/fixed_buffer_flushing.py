@@ -375,7 +375,9 @@ class qviz:
     def on_new_frame(self):
         """
         Function called every time the temporal controller frame is changed. 
-        It updates the content of the vector layer displayed on the ma
+        It updates the content of the vector layer displayed on the map.
+        """
+        now = time.time()
         curr_frame = self.temporalController.currentFrameNumber()
         print(f"\n\n\n\n\n\ncurr_frame : {curr_frame}")
 
