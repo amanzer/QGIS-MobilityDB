@@ -218,10 +218,11 @@ class ParallelTask(QgsTask):
                         batch_coords[key].append((coords.x, coords.y))
                     except Exception as e:
                         continue
-
+            
+            del features
+            gc.collect()
 
             self.result_params = {
-                'pymeos_data_batch': features,
                 'delta_key': self.delta_key,
                 'batch' : batch_coords
             }
@@ -324,7 +325,7 @@ class qviz:
         self.removePoints_times = []
         self.update_features_times = []
         self.number_of_points_stored_in_layer = []    
-
+        
         self.createVectorLayer()
         self.canvas = iface.mapCanvas()
         self.temporalController = self.canvas.temporalController()
@@ -332,10 +333,10 @@ class qviz:
         self.direction = "forward"
         self.temporalController.setFramesPerSecond(frame_rate)
 
-        xmin = self.vlayer.extent().xMinimum()    
-        ymin = self.vlayer.extent().yMinimum()
-        xmax = self.vlayer.extent().xMaximum()
-        ymax = self.vlayer.extent().yMaximum()
+        xmin = iface.mapCanvas().extent().xMinimum()
+        ymin = iface.mapCanvas().extent().yMinimum()
+        xmax = iface.mapCanvas().extent().xMaximum()
+        ymax = iface.mapCanvas().extent().yMaximum()
         print(f"Extent : {xmin}, {ymin}, {xmax}, {ymax}")
         self.data =  Data_in_memory(xmin, ymin, xmax, ymax)
         self.data.task_manager.taskAdded.connect(self.pause)
@@ -422,10 +423,11 @@ class qviz:
 
         if curr_frame % TIME_DELTA == 0:
             print(f"DOTHRAKIS ARE COMING\n Time delta : {self.current_time_delta} : {self.data.timestamps_strings[self.current_time_delta]} \n Frame : {curr_frame}")
-            xmin = self.vlayer.extent().xMinimum()    
-            ymin = self.vlayer.extent().yMinimum()
-            xmax = self.vlayer.extent().xMaximum()
-            ymax = self.vlayer.extent().yMaximum()
+            
+            xmin = iface.mapCanvas().extent().xMinimum()
+            ymin = iface.mapCanvas().extent().yMinimum()
+            xmax = iface.mapCanvas().extent().xMaximum()
+            ymax = iface.mapCanvas().extent().yMaximum()
             print(f"Extent : {xmin}, {ymin}, {xmax}, {ymax}")
             if self.direction == "back":
                 # Going back in time
@@ -470,7 +472,7 @@ class qviz:
 
         QgsProject.instance().addMapLayer(self.vlayer)
 
-  
+ 
 
     def addPoints(self, currentFrameNumber=0):
         """
