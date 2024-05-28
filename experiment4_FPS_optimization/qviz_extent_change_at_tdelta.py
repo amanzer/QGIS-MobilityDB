@@ -1,41 +1,51 @@
 """
-We experiment with the optimization of the FPS by using a buffer that stores
-only the data for the current time delta and the next one in order to reduce the memory used
-and accelerate access times.
+
+- ADD/DEL QGS FEATURES EVERY FRAME
+
+- UPDATE STBOX EVERY TIME DELTA
 
 """
 
 
 from pymeos.db.psycopg import MobilityDB
+import psycopg2
 from pymeos import *
 from datetime import datetime, timedelta
 import time
-import math
-
-import psycopg2
 from collections import deque
 from pympler import asizeof
 import gc
+from enum import Enum
 
-PERCENTAGE_OF_SHIPS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA = 48 # Parameter that defines the size of the batch of data to fetch from the MobilityDB database
+
+
+
+
+class Time_granularity(Enum):
+    MICROSECOND = timedelta(microseconds=1)
+    MILLISECOND = timedelta(milliseconds=1)
+    SECOND = timedelta(seconds=1)
+    MINUTE = timedelta(minutes=1)
+    HOUR = timedelta(hours=1)
+    DAY = timedelta(days=1)
+    WEEK = timedelta(weeks=1)
+    
 LEN_DEQUEUE_FPS = 5 # Length of the dequeue to calculate the average FPS
 LEN_DEQUEUE_BUFFER = 2 # Length of the dequeue to keep the keys to keep in the buffer
 
+
+PERCENTAGE_OF_SHIPS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
+FRAMES_PER_TIME_DELTA = 48 # Number of frames associated to one Time delta
+GRANULARITY = Time_granularity.MINUTE
+
 class Data_in_memory:
     """
-    MVC : This is the model
-
-    This class plays the role of the model in the MVC pattern. 
-    It is used to store the data in memory and to create the link betwseen
-    the QGIS UI (temporal Controller/Vector Layer) and the MobilityDB database.
+    This class handles the data stored in memory and the background threads that fetch the data from the MobilityDB database.
+    
+    It is the link between the QGIS UI (temporal Controller/Vector Layer controlled by the qviz class) and the MobilityDB database.
     
     """
     def __init__(self, xmin, ymin, xmax, ymax):
-        #Metrics to measure 
-        #self.STATS_value_at_timestamp = [] # Time to get the value for a timestamp by pymeos
-        #self.STATS_qgis_features = [] # Time to create the QGIS features    
-
 
         self.task_manager = QgsApplication.taskManager()
         self.db = mobDB()
@@ -46,35 +56,49 @@ class Data_in_memory:
         self.xmax = xmax
         self.ymax = ymax
 
-        self.mmsi_list = self.db.getMMSI(PERCENTAGE_OF_SHIPS)
+        self.mmsi_list = self.db.getMMSI(PERCENTAGE_OF_SHIPS) 
         
-        self.steps = 1440
-
-        start_date = datetime(2023, 6, 1, 0, 0, 0)
-        time_delta = timedelta(minutes=1)
-        self.timestamps = [start_date + i * time_delta for i in range(self.steps)]
-        self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
+        self.generate_timestamps()
 
         self.buffer = {}
-
         self.keys_to_keep = deque(maxlen=LEN_DEQUEUE_BUFFER)
         self.keys_to_keep.append(self.timestamps_strings[0])
         task = ParallelTask(f"Batch requested for time delta {0} - {self.timestamps_strings[0]}", 0, self.timestamps_strings[0],
-                                     "qViz",self.db,self.mmsi_list, 0, TIME_DELTA, self.xmin, self.ymin, self.xmax, self.ymax , self.timestamps, self.finish, self.raise_error)
-        #task.taskCompleted.connect(self.second_batch)
+                                     "qViz",self.db,self.mmsi_list, 0, FRAMES_PER_TIME_DELTA, self.xmin, self.ymin, self.xmax, self.ymax , self.timestamps, self.finish, self.raise_error)
+        
         self.task_manager.addTask(task)     
+    
 
-    def second_batch(self):
+    def generate_timestamps(self):
         """
-        Function called when the task to fetch the second batch of data from the MobilityDB database is finished.
+        TODO : FRAMES_PER_TIME_DELTA should be defined here depending on the granularity selected
+        TODO : Granularity should be taken from Temporal Controller
+        TODO : 
+        Fetch min and max timestamps from the MobilityDB database
+
+        SELECT MAX(startTimestamp(trajectory)) AS earliest_timestamp
+        FROM pymeos_demo;
+
+        SELECT MAX(endTimestamp(trajectory)) AS latest_timestamp
+        FROM pymeos_demo;
         """
-        self.fetchMobilityDB(TIME_DELTA, self.timestamps_strings[TIME_DELTA], self.mmsi_list, TIME_DELTA, 2*TIME_DELTA, self.xmin, self.ymin, self.xmax, self.ymax)
+        start_date = datetime(2023, 6, 1, 0, 0, 0)
+        end_date = datetime(2023, 6, 1, 23, 59, 58)
+        self.total_frames = (end_date - start_date) // GRANULARITY.value
+
+        self.timestamps = [start_date + i * GRANULARITY.value for i in range(self.total_frames)]
+        self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
+
+
 
     def update_keys_to_keep(self, current_frame, direction):
         """
-        Updates the list of keys to keep in the buffer.
+        TODO : Rename the methods related to the buffer and the buffer itself to make it more clear
+
+        We want the buffer dictionnary to only keep the values associated to the keys in the keys_to_keep deque.
+        By doing this we can only keep in memory the data necessary to the animation.
+
         """
-        # handle the case were the element is already in the buffer
         key = self.timestamps_strings[current_frame]
 
         if key in self.keys_to_keep:
@@ -86,6 +110,11 @@ class Data_in_memory:
         print(self.keys_to_keep)
 
     def flush_buffer(self):
+        """
+        Removes all keys/values associated to past time deltas from the buffer.
+
+        Forecefully calls the garbage collector to free the memory.
+        """
         #remove from buffer all the keys that are not in the keys_to_keep
         for key in list(self.buffer.keys()):
             if key not in self.keys_to_keep:
@@ -96,12 +125,6 @@ class Data_in_memory:
         size_in_megabytes = size_in_bytes / (1024 * 1024)
         print(f"Total size of dictionary (including referenced objects): {size_in_megabytes:.6f} MB")
 
-    def delete_time_delta(self, delta_key):
-        """
-        Deletes the data for the given time delta from the buffer.
-        """
-        del self.buffer[self.timestamps_strings[delta_key]]
-        gc.collect()
  
     def fetchMobilityDB(self,current_frame,delta_key, mmsi_list, pstart, pend, xmin, ymin, xmax, ymax):
         task = ParallelTask(f"Batch requested for time delta {current_frame} - {self.timestamps_strings[current_frame]}", current_frame,delta_key,
@@ -111,8 +134,8 @@ class Data_in_memory:
 
     def fetch_batch(self, start_frame, end_frame, xmin, ymin, xmax, ymax):
         delta_key = self.timestamps_strings[start_frame]
-       
-        if end_frame  <= self.steps and start_frame >= 0:
+        
+        if end_frame  <= (len(self.timestamps)) and start_frame >= 0:
             print(f"Fetching batch for {start_frame} to {end_frame} aka {self.timestamps_strings[start_frame]} to {self.timestamps_strings[end_frame]}")
             self.fetchMobilityDB(start_frame, delta_key, self.mmsi_list, start_frame, end_frame, xmin, ymin, xmax, ymax)
 
@@ -363,7 +386,7 @@ class qviz:
         print(f"Extents : {self.xmin}, {self.ymin}, {self.xmax}, {self.ymax}")
         self.data =  Data_in_memory(self.xmin, self.ymin, self.xmax, self.ymax)
         self.data.task_manager.taskAdded.connect(self.pause)
-        self.data.task_manager.allTasksFinished.connect(self.play)
+        #self.data.task_manager.allTasksFinished.connect(self.play)
         self.current_time_delta = 0
         self.last_frame = 0
         #self.on_new_frame()
@@ -451,7 +474,7 @@ class qviz:
                 self.updateFrameRate(t)
         else:
             self.direction = "forward"
-            if curr_frame >= self.data.steps:
+            if curr_frame >= len(self.data.timestamps)-1:
                 self.updateCanvas()
                 print(self.direction)
                 t = time.time()-now
@@ -461,7 +484,7 @@ class qviz:
 
         self.last_frame = curr_frame
 
-        if curr_frame % TIME_DELTA == 0:
+        if curr_frame % FRAMES_PER_TIME_DELTA == 0:
             self.updateCanvas()
             print(f"DOTHRAKIS ARE COMING\n Time delta : {self.current_time_delta} : {self.data.timestamps_strings[self.current_time_delta]} \n Frame : {curr_frame}")
             self.xmin = iface.mapCanvas().extent().xMinimum()
@@ -471,10 +494,10 @@ class qviz:
             print(f"Extents : {self.xmin}, {self.ymin}, {self.xmax}, {self.ymax}")
             if self.direction == "back":
                 # Going back in time
-                self.current_time_delta = (curr_frame - TIME_DELTA)
-                start = curr_frame-(TIME_DELTA)
+                self.current_time_delta = (curr_frame - FRAMES_PER_TIME_DELTA)
+                start = curr_frame-(FRAMES_PER_TIME_DELTA)
                 end = curr_frame
-                self.data.update_keys_to_keep(curr_frame-TIME_DELTA, self.direction)
+                self.data.update_keys_to_keep(curr_frame-FRAMES_PER_TIME_DELTA, self.direction)
                 self.data.flush_buffer()
                 self.data.fetch_batch(start, end, self.xmin, self.ymin, self.xmax, self.ymax) 
 
@@ -482,7 +505,7 @@ class qviz:
                 # Going forward in time
                 self.current_time_delta = curr_frame
                 start = curr_frame
-                end = curr_frame+TIME_DELTA
+                end = curr_frame+FRAMES_PER_TIME_DELTA
                 self.data.update_keys_to_keep(curr_frame, self.direction)
                 self.data.flush_buffer()
                 self.data.fetch_batch(start, end, self.xmin, self.ymin, self.xmax, self.ymax)

@@ -1,7 +1,8 @@
 """
-We experiment with the optimization of the FPS by using a buffer that stores
-only the data for the current time delta and the next one in order to reduce the memory used
-and accelerate access times.
+
+- ADD/DEL QGS FEATURES EVERY FRAME
+
+- STBOX IS FIXED THROUGHOUT THE ANIMATION
 
 """
 
