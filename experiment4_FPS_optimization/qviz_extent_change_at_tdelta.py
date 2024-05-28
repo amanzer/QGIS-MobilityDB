@@ -59,7 +59,7 @@ class Data_in_memory:
 
         self.keys_to_keep = deque(maxlen=LEN_DEQUEUE_BUFFER)
         self.keys_to_keep.append(self.timestamps_strings[0])
-        task = ParallelTask(f"Next batch is being requested: {0}", 0, self.timestamps_strings[0],
+        task = ParallelTask(f"Batch requested for time delta {0} - {self.timestamps_strings[0]}", 0, self.timestamps_strings[0],
                                      "qViz",self.db,self.mmsi_list, 0, TIME_DELTA, self.xmin, self.ymin, self.xmax, self.ymax , self.timestamps, self.finish, self.raise_error)
         #task.taskCompleted.connect(self.second_batch)
         self.task_manager.addTask(task)     
@@ -104,7 +104,7 @@ class Data_in_memory:
         gc.collect()
  
     def fetchMobilityDB(self,current_frame,delta_key, mmsi_list, pstart, pend, xmin, ymin, xmax, ymax):
-        task = ParallelTask(f"Next batch is being requested: {current_frame}", current_frame,delta_key,
+        task = ParallelTask(f"Batch requested for time delta {current_frame} - {self.timestamps_strings[current_frame]}", current_frame,delta_key,
                                      "qViz",self.db,mmsi_list, pstart, pend, xmin, ymin, xmax, ymax, self.timestamps, self.finish, self.raise_error)
 
         self.task_manager.addTask(task)        
@@ -123,6 +123,10 @@ class Data_in_memory:
         """
         # check delta_key exists in buffer        
         self.buffer[params['delta_key']] = params['batch']
+        # display stats from task 
+        for stat in  params['stats']:
+            print(stat)
+        
 
 
     def raise_error(self, msg):
@@ -218,8 +222,13 @@ class ParallelTask(QgsTask):
         for the given time delta.
         """
         try:
-            features = self.db.getTrajectories(self.mmsi_list, self.timestamps[self.pstart], self.timestamps[self.pend], self.xmin, self.ymin, self.xmax, self.ymax)
+            stats = []
+            now = time.time()
 
+            features = self.db.getTrajectories(self.mmsi_list, self.timestamps[self.pstart], self.timestamps[self.pend], self.xmin, self.ymin, self.xmax, self.ymax)
+            stats.append(f"Time to fetch subTpoints from MobilityDB : {time.time()-now} s")
+
+            now2 = time.time()
             batch_coords = {}           
             for key in range(self.pstart,self.pend +1):
                 batch_coords[key] = []
@@ -232,10 +241,12 @@ class ParallelTask(QgsTask):
             
             del features
             gc.collect()
-
+            stats.append(f"Time to get coordinates with Value_at_timestamp : {time.time()-now2} s")
+            stats.append(f"Total time for task : {time.time()-now} s")
             self.result_params = {
                 'delta_key': self.delta_key,
-                'batch' : batch_coords
+                'batch' : batch_coords,
+                'stats': stats
             }
         except psycopg2.Error as e:
             self.error_msg = str(e)
@@ -371,10 +382,10 @@ class qviz:
         Plays the temporal controller animation.
         """
         self.updateCanvas()
-        # if self.direction == "forward":
-        #     self.temporalController.playForward()
-        # else:
-        #     self.temporalController.playBackward()
+        if self.direction == "forward":
+            self.temporalController.playForward()
+        else:
+            self.temporalController.playBackward()
             
 
     def pause(self):
