@@ -194,8 +194,8 @@ class Data_in_memory:
 
             
             
-            print(f"Added {len(qgis_fields_list)} features to timestamp {key}")
-            print(f"time for QgsFeature generation : {time.time() - now_value_at_ts_qgs_feature}")
+            print(f"QgsFeature generation time : {time.time() - now_value_at_ts_qgs_feature}")
+            print(f"Timestamp {key}", end=" ")
             return qgis_fields_list
         except Exception as e:
             print(e)
@@ -390,16 +390,17 @@ class qviz:
         print(f"Extents : {self.xmin}, {self.ymin}, {self.xmax}, {self.ymax}")
         self.data =  Data_in_memory(self.xmin, self.ymin, self.xmax, self.ymax)
         self.data.task_manager.taskAdded.connect(self.pause)
-        #self.data.task_manager.allTasksFinished.connect(self.play)
+        self.data.task_manager.allTasksFinished.connect(self.play)
         self.current_time_delta = 0
         self.last_frame = 0
-        #self.on_new_frame()
+        self.update_vlayer_content
         
         self.dq_FPS = deque(maxlen=LEN_DEQUEUE_FPS)
         for i in range(LEN_DEQUEUE_FPS):
             self.dq_FPS.append(0.033)
 
         self.fps_record = []
+        self.feature_number_record = []
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
     
 
@@ -429,6 +430,12 @@ class qviz:
         Returns the average FPS of the temporal controller.
         """
         return sum(self.fps_record)/len(self.fps_record)
+    
+    def get_average_feature_number(self):
+        """
+        Returns the average number of features displayed on the map.
+        """
+        return sum(self.feature_number_record)/len(self.feature_number_record)
 
     def update_frame_rate(self, new_frame_time):
         """
@@ -457,7 +464,9 @@ class qviz:
 
         curr_frame = self.temporalController.currentFrameNumber()
         print(f"\n\n\n\n\n\ncurr_frame : {curr_frame}")
-
+        if curr_frame == 1392:
+            self.pause()
+            return
         if self.last_frame - curr_frame > 0:
             self.direction = "back"
             if curr_frame <= 0:
@@ -544,15 +553,15 @@ class qviz:
         """
         now= time.time()
 
-        self.qgis_fields_list = self.data.generate_qgis_points(self.current_time_delta,currentFrameNumber, self.vlayer.fields())
-        
-
+        qgis_fields_list = self.data.generate_qgis_points(self.current_time_delta,currentFrameNumber, self.vlayer.fields())
+        number_of_features = len(qgis_fields_list)
+        print(f" Added {number_of_features} features")
         self.vlayer.startEditing()
-        self.vlayer.addFeatures(self.qgis_fields_list) # Add list of features to vlayer
+        self.vlayer.addFeatures(qgis_fields_list) # Add list of features to vlayer
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
-        
         print(f"add_valyer_features time : {time.time()-now}")
+        self.feature_number_record.append(number_of_features)
         
 
     def delete_vlayer_features(self):
