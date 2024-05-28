@@ -6,7 +6,7 @@
 
 """
 
-
+# TODO : Include the PYQGIS imports for the plugin
 from pymeos.db.psycopg import MobilityDB
 import psycopg2
 from pymeos import *
@@ -29,7 +29,8 @@ class Time_granularity(Enum):
     HOUR = timedelta(hours=1)
     DAY = timedelta(days=1)
     WEEK = timedelta(weeks=1)
-    
+
+
 LEN_DEQUEUE_FPS = 5 # Length of the dequeue to calculate the average FPS
 LEN_DEQUEUE_BUFFER = 2 # Length of the dequeue to keep the keys to keep in the buffer
 
@@ -63,8 +64,8 @@ class Data_in_memory:
         self.buffer = {}
         self.keys_to_keep = deque(maxlen=LEN_DEQUEUE_BUFFER)
         self.keys_to_keep.append(self.timestamps_strings[0])
-        task = ParallelTask(f"Batch requested for time delta {0} - {self.timestamps_strings[0]}", 0, self.timestamps_strings[0],
-                                     "qViz",self.db,self.mmsi_list, 0, FRAMES_PER_TIME_DELTA, self.xmin, self.ymin, self.xmax, self.ymax , self.timestamps, self.finish, self.raise_error)
+        task = QgisThread(f"Batch requested for time delta {0} - {self.timestamps_strings[0]}", 0, self.timestamps_strings[0],
+                                     "qViz",self.db,self.mmsi_list, 0, FRAMES_PER_TIME_DELTA, self.xmin, self.ymin, self.xmax, self.ymax , self.timestamps, self.on_thread_completed, self.raise_error)
         
         self.task_manager.addTask(task)     
     
@@ -124,25 +125,26 @@ class Data_in_memory:
         size_in_bytes = asizeof.asizeof(self.buffer)
         size_in_megabytes = size_in_bytes / (1024 * 1024)
         print(f"Total size of dictionary (including referenced objects): {size_in_megabytes:.6f} MB")
+    
 
- 
-    def fetchMobilityDB(self,current_frame,delta_key, mmsi_list, pstart, pend, xmin, ymin, xmax, ymax):
-        task = ParallelTask(f"Batch requested for time delta {current_frame} - {self.timestamps_strings[current_frame]}", current_frame,delta_key,
-                                     "qViz",self.db,mmsi_list, pstart, pend, xmin, ymin, xmax, ymax, self.timestamps, self.finish, self.raise_error)
-
-        self.task_manager.addTask(task)        
-
-    def fetch_batch(self, start_frame, end_frame, xmin, ymin, xmax, ymax):
+    def fetch_data_with_thread(self, start_frame, end_frame, xmin, ymin, xmax, ymax):
+        """
+        Creates a thread to fetch the data from the MobilityDB database for the given time delta.
+        """
         delta_key = self.timestamps_strings[start_frame]
-        
+
         if end_frame  <= (len(self.timestamps)) and start_frame >= 0:
             print(f"Fetching batch for {start_frame} to {end_frame} aka {self.timestamps_strings[start_frame]} to {self.timestamps_strings[end_frame]}")
-            self.fetchMobilityDB(start_frame, delta_key, self.mmsi_list, start_frame, end_frame, xmin, ymin, xmax, ymax)
+
+            task = QgisThread(f"Batch requested for time delta {start_frame} - {self.timestamps_strings[start_frame]}", start_frame,delta_key,
+                                     "qViz",self.db,self.mmsi_list, start_frame, end_frame, xmin, ymin, xmax, ymax, self.timestamps, self.on_thread_completed, self.raise_error)
+
+            self.task_manager.addTask(task)        
 
 
-    def finish(self, params):
+    def on_thread_completed(self, params):
         """
-        Function called when the task to fetch the data from the MobilityDB database is finished.
+        Function called when a thread finishes its job to fetch the data from the MobilityDB database.
         """
         # check delta_key exists in buffer        
         self.buffer[params['delta_key']] = params['batch']
@@ -162,14 +164,10 @@ class Data_in_memory:
             self.log("Unknown error")
 
 
-    def setNextBatch(self, batch):
-        self.setNextBatch = batch
-
     def generate_qgis_points(self,current_time_delta, frame_number, vlayer_fields):
         """
-        Provides the UI with the features to display on the map for the Timestamp associated
-        to the given frame number.
-
+        This method creates the QGIS features for each coordinate associated to the given
+        time delta and frame number.
         """
         try : 
             time_delta_key = self.timestamps_strings[current_time_delta]
@@ -208,14 +206,16 @@ class Data_in_memory:
 
 
 
-class ParallelTask(QgsTask):
+class QgisThread(QgsTask):
     """
-    This class is used to fetch the data from the MobilityDB database in parallel
-    using Qgis's threads. This allows to keep the UI responsive while the data is being fetched.
+    Creates a thread that fetches data from the MobilityDB database 
+    Parameters include : the time delta, STBOX paramters, Time range...
+    
+    This allows to keep the UI responsive while the data is being fetched.
     """
     def __init__(self, description, current_frame, delta_key, project_title,db,mmsi_list, pstart, pend, xmin, ymin, xmax, ymax, timestamps, finished_fnc,
                  failed_fnc):
-        super(ParallelTask, self).__init__(description, QgsTask.CanCancel)
+        super(QgisThread, self).__init__(description, QgsTask.CanCancel)
         self.current_frame = current_frame
         self.delta_key = delta_key
         self.project_title = project_title
@@ -347,6 +347,15 @@ class mobDB:
         except Exception as e:
             print(e)
 
+    def get_min_max_timestamps(self):
+        """
+        SELECT MAX(startTimestamp(trajectory)) AS earliest_timestamp
+        FROM pymeos_demo;
+
+        SELECT MAX(endTimestamp(trajectory)) AS latest_timestamp
+        FROM pymeos_demo;
+        """
+        pass
 
     def close(self):
         """
@@ -358,27 +367,22 @@ class mobDB:
 
 class qviz:
     """
-    MVC : This is the controller
 
     This class plays the role of the controller in the MVC pattern.
     It is used to manage the user interaction with the View, which is the QGIS UI.
     
     It handles the interactions with both the Temporal Controller and the Vector Layer.
     """
-    def __init__(self):
-        iface.mapCanvas().setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
-        self.on_new_frame_times = []
-        self.removePoints_times = []
-        self.update_features_times = []
-        self.number_of_points_stored_in_layer = []    
-        
-        self.createVectorLayer()
+    def __init__(self):    
+        self.create_vlayer()
         self.canvas = iface.mapCanvas()
+        self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
         self.temporalController = self.canvas.temporalController()
         frame_rate = 30
         self.direction = "forward"
         self.temporalController.setFramesPerSecond(frame_rate)
 
+        # TODO : use self.canvas and reduce 4 float variables into 1 string
         self.xmin = iface.mapCanvas().extent().xMinimum()
         self.ymin = iface.mapCanvas().extent().yMinimum()
         self.xmax = iface.mapCanvas().extent().xMaximum()
@@ -402,9 +406,10 @@ class qviz:
     
     def play(self):
         """
+        TODO : self.direction has to be replaced by the animation state of the Temporal Controller
         Plays the temporal controller animation.
         """
-        self.updateCanvas()
+        self.update_vlayer_content()
         if self.direction == "forward":
             self.temporalController.playForward()
         else:
@@ -418,33 +423,21 @@ class qviz:
         self.temporalController.pause()
 
 
-    def get_stats(self):
-        """
-        Returns the statistics of the time taken by each function.
-        """
-        # avg_value_at_timestamp = sum(self.data.STATS_value_at_timestamp)/len(self.data.STATS_value_at_timestamp)
-        # #avg_qgis_features = sum(self.data.STATS_qgis_features)/len(self.data.STATS_qgis_features)
-        # # show average in seconds
-        # print(f"Number of times value_at_timestamp was called: {len(self.data.STATS_value_at_timestamp)}")
-        # print(f"Average time to get value at timestamp: {avg_value_at_timestamp}s")
-        # print(f"Max time to get value at timestamp: {max(self.data.STATS_value_at_timestamp)}s")
-        # print(f"Min time to get value at timestamp: {min(self.data.STATS_value_at_timestamp)}s")
-        # #print(f"Average time to create QGIS features: {avg_qgis_features}")
-        pass
+ 
     def get_average_fps(self):
         """
         Returns the average FPS of the temporal controller.
         """
         return sum(self.fps_record)/len(self.fps_record)
 
-    def updateFrameRate(self, time):
+    def update_frame_rate(self, new_frame_time):
         """
         Updates the frame rate of the temporal controller.
         """
-        # self.dq_FPS.append(time)
+        # self.dq_FPS.append(new_frame_time)
         # avg_frame_time = (sum(self.dq_FPS)/LEN_DEQUEUE_FPS)
         # print(f"Average time for On_new_frame : {avg_frame_time}")
-        optimal_fps = 1 / time
+        optimal_fps = 1 / new_frame_time
         print(f"Optimal FPS : {optimal_fps} (FPS = 1/frame_gen_time)") 
         fps =  optimal_fps
 
@@ -455,7 +448,9 @@ class qviz:
     
     def on_new_frame(self):
         """
-        Function called every time the temporal controller frame is changed. 
+        TODO : Divide this function into smaller functions to make it more readable
+        
+        Function called every time the frame of the temporal controller is changed. 
         It updates the content of the vector layer displayed on the map.
         """
         now = time.time()
@@ -466,27 +461,26 @@ class qviz:
         if self.last_frame - curr_frame > 0:
             self.direction = "back"
             if curr_frame <= 0:
-                self.updateCanvas()
+                self.update_vlayer_content()
                 print(self.direction)
-                t = time.time()-now
-                self.on_new_frame_times.append(t)
+                new_frame_time = time.time()-now
                 #print(f"Time for on_new_frame : {t}")
-                self.updateFrameRate(t)
+                self.update_frame_rate(new_frame_time)
         else:
             self.direction = "forward"
             if curr_frame >= len(self.data.timestamps)-1:
-                self.updateCanvas()
+                self.update_vlayer_content()
                 print(self.direction)
-                t = time.time()-now
-                self.on_new_frame_times.append(t)
+                new_frame_time = time.time()-now
                 #print(f"Time for on_new_frame : {t}")
-                self.updateFrameRate(t)
+                self.update_frame_rate(new_frame_time)
 
         self.last_frame = curr_frame
 
         if curr_frame % FRAMES_PER_TIME_DELTA == 0:
-            self.updateCanvas()
+            self.update_vlayer_content()
             print(f"DOTHRAKIS ARE COMING\n Time delta : {self.current_time_delta} : {self.data.timestamps_strings[self.current_time_delta]} \n Frame : {curr_frame}")
+            # TODO : use self.canvas and reduce 4 float variables into 1 string
             self.xmin = iface.mapCanvas().extent().xMinimum()
             self.ymin = iface.mapCanvas().extent().yMinimum()
             self.xmax = iface.mapCanvas().extent().xMaximum()
@@ -499,7 +493,7 @@ class qviz:
                 end = curr_frame
                 self.data.update_keys_to_keep(curr_frame-FRAMES_PER_TIME_DELTA, self.direction)
                 self.data.flush_buffer()
-                self.data.fetch_batch(start, end, self.xmin, self.ymin, self.xmax, self.ymax) 
+                self.data.fetch_data_with_thread(start, end, self.xmin, self.ymin, self.xmax, self.ymax) 
 
             elif self.direction == "forward":
                 # Going forward in time
@@ -508,24 +502,27 @@ class qviz:
                 end = curr_frame+FRAMES_PER_TIME_DELTA
                 self.data.update_keys_to_keep(curr_frame, self.direction)
                 self.data.flush_buffer()
-                self.data.fetch_batch(start, end, self.xmin, self.ymin, self.xmax, self.ymax)
+                self.data.fetch_data_with_thread(start, end, self.xmin, self.ymin, self.xmax, self.ymax)
         else: 
-            self.updateCanvas()
+            self.update_vlayer_content()
             print(self.direction)
-            t = time.time()-now
-            self.on_new_frame_times.append(t)
-            #print(f"Time for on_new_frame : {t}")
+            new_frame_time = time.time()-now
+            
 
-            self.updateFrameRate(t)
+            print(f"Time for on_new_frame : {new_frame_time}")
+            self.update_frame_rate(new_frame_time)
     
-    def updateCanvas(self):
-        self.removePoints() # Deletes all previous points
-        self.addPoints(self.last_frame)
-
-    
-    def createVectorLayer(self):
+    def update_vlayer_content(self):
         """
-        Creates a vector layer in memory to store the points to be displayed on the map.
+        Updates the content of the vector layer displayed on the map.
+        """
+        self.delete_vlayer_features() # Deletes all previous points
+        self.add_vlayer_features(self.last_frame)
+
+    
+    def create_vlayer(self):
+        """
+        Creates a Qgis Vector layer in memory to store the points to be displayed on the map.
         """
         self.vlayer = QgsVectorLayer("Point", "MobilityBD Data", "memory")
         pr = self.vlayer.dataProvider()
@@ -541,12 +538,10 @@ class qviz:
 
  
 
-    def addPoints(self, currentFrameNumber=0):
+    def add_vlayer_features(self, currentFrameNumber=0):
         """
         Adds the points to the vector layer to be displayed for the current frame on the map.
         """
-        #self.updateTimestamps()
-        #self.features.update(self.timestamps)
         now= time.time()
 
         self.qgis_fields_list = self.data.generate_qgis_points(self.current_time_delta,currentFrameNumber, self.vlayer.fields())
@@ -556,19 +551,19 @@ class qviz:
         self.vlayer.addFeatures(self.qgis_fields_list) # Add list of features to vlayer
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
-        self.update_features_times.append(time.time()-now)
-        self.number_of_points_stored_in_layer.append(len(self.qgis_fields_list))
+        
+        print(f"add_valyer_features time : {time.time()-now}")
+        
 
-    def removePoints(self):
+    def delete_vlayer_features(self):
         now= time.time()
         self.vlayer.startEditing()
         delete_ids = [f.id() for f in self.vlayer.getFeatures()]
         self.vlayer.deleteFeatures(delete_ids)
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
-        time_to_delete = time.time()-now
-        print(f"time to delete features : {time_to_delete}")
-        self.removePoints_times.append(time_to_delete)
+
+        print(f"delete_vlayer_features time : {time.time()-now}")
 
 
 
