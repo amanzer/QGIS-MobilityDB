@@ -22,13 +22,11 @@ from enum import Enum
 
 
 class Time_granularity(Enum):
-    MICROSECOND = timedelta(microseconds=1)
-    MILLISECOND = timedelta(milliseconds=1)
-    SECOND = timedelta(seconds=1)
-    MINUTE = timedelta(minutes=1)
-    HOUR = timedelta(hours=1)
-    DAY = timedelta(days=1)
-    WEEK = timedelta(weeks=1)
+    MILLISECOND = {"timedelta" : timedelta(milliseconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Milliseconds}
+    SECOND = {"timedelta" : timedelta(seconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Seconds}
+    MINUTE = {"timedelta" : timedelta(minutes=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Minutes}
+    HOUR = {"timedelta" : timedelta(hours=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Hours}
+  
 
 
 LEN_DEQUEUE_FPS = 5 # Length of the dequeue to calculate the average FPS
@@ -69,7 +67,7 @@ class Data_in_memory:
         
         self.task_manager.addTask(task)     
     
-
+    
     def generate_timestamps(self):
         """
         TODO : FRAMES_PER_TIME_DELTA should be defined here depending on the granularity selected
@@ -77,7 +75,7 @@ class Data_in_memory:
         TODO : 
         Fetch min and max timestamps from the MobilityDB database
 
-        SELECT MAX(startTimestamp(trajectory)) AS earliest_timestamp
+        SELECT MIN(startTimestamp(trajectory)) AS earliest_timestamp
         FROM pymeos_demo;
 
         SELECT MAX(endTimestamp(trajectory)) AS latest_timestamp
@@ -85,12 +83,17 @@ class Data_in_memory:
         """
         start_date = datetime(2023, 6, 1, 0, 0, 0)
         end_date = datetime(2023, 6, 1, 23, 59, 58)
-        self.total_frames = (end_date - start_date) // GRANULARITY.value
+        self.total_frames = (end_date - start_date) // GRANULARITY.value["timedelta"]
 
-        self.timestamps = [start_date + i * GRANULARITY.value for i in range(self.total_frames)]
+        self.timestamps = [start_date + i * GRANULARITY.value["timedelta"] for i in range(self.total_frames)]
         self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
 
-
+    def update_temporal_controller_extent(self, temporalController):
+        """
+        Updates the extent of the temporal controller to match the time range of the data.
+        """
+        time_range = QgsDateTimeRange(self.timestamps[0], self.timestamps[-1])
+        temporalController.setTemporalExtents(time_range)
 
     def update_keys_to_keep(self, current_frame, direction):
         """
@@ -349,7 +352,7 @@ class mobDB:
 
     def get_min_max_timestamps(self):
         """
-        SELECT MAX(startTimestamp(trajectory)) AS earliest_timestamp
+        SELECT MIN(startTimestamp(trajectory)) AS earliest_timestamp
         FROM pymeos_demo;
 
         SELECT MAX(endTimestamp(trajectory)) AS latest_timestamp
@@ -381,6 +384,9 @@ class qviz:
         frame_rate = 30
         self.direction = "forward"
         self.temporalController.setFramesPerSecond(frame_rate)
+        interval = QgsInterval(1, GRANULARITY.value["qgs_unit"])
+        self.temporalController.setFrameDuration(interval)
+
 
         # TODO : use self.canvas and reduce 4 float variables into 1 string
         self.xmin = iface.mapCanvas().extent().xMinimum()
@@ -390,7 +396,7 @@ class qviz:
         print(f"Extents : {self.xmin}, {self.ymin}, {self.xmax}, {self.ymax}")
         self.data =  Data_in_memory(self.xmin, self.ymin, self.xmax, self.ymax)
         self.data.task_manager.taskAdded.connect(self.pause)
-        self.data.task_manager.allTasksFinished.connect(self.play)
+        #self.data.task_manager.allTasksFinished.connect(self.play)
         self.current_time_delta = 0
         self.last_frame = 0
         self.update_vlayer_content
@@ -402,8 +408,8 @@ class qviz:
         self.fps_record = []
         self.feature_number_record = []
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
-    
-
+        self.data.update_temporal_controller_extent(self.temporalController)
+        
     
     def play(self):
         """

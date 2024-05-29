@@ -77,7 +77,7 @@ class Data_in_memory:
         TODO : 
         Fetch min and max timestamps from the MobilityDB database
 
-        SELECT MAX(startTimestamp(trajectory)) AS earliest_timestamp
+        SELECT MIN(startTimestamp(trajectory)) AS earliest_timestamp
         FROM pymeos_demo;
 
         SELECT MAX(endTimestamp(trajectory)) AS latest_timestamp
@@ -349,7 +349,7 @@ class mobDB:
 
     def get_min_max_timestamps(self):
         """
-        SELECT MAX(startTimestamp(trajectory)) AS earliest_timestamp
+        SELECT MIN(startTimestamp(trajectory)) AS earliest_timestamp
         FROM pymeos_demo;
 
         SELECT MAX(endTimestamp(trajectory)) AS latest_timestamp
@@ -376,17 +376,17 @@ class qviz:
     def __init__(self):    
         self.create_vlayer()
         self.canvas = iface.mapCanvas()
-        self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+        self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:0"))
         self.temporalController = self.canvas.temporalController()
         frame_rate = 30
         self.direction = "forward"
         self.temporalController.setFramesPerSecond(frame_rate)
 
-        # TODO : use self.canvas and reduce 4 float variables into 1 string
-        self.xmin = iface.mapCanvas().extent().xMinimum()
-        self.ymin = iface.mapCanvas().extent().yMinimum()
-        self.xmax = iface.mapCanvas().extent().xMaximum()
-        self.ymax = iface.mapCanvas().extent().yMaximum()
+        # TODO : use self.canvas and reduce 4 float variables into 1 string  
+        self.xmin = -3.01733170955181862
+        self.ymin =  48.69190684846805084
+        self.xmax = 22.73323493966157827
+        self.ymax = 66.54173145758187502
         print(f"Extents : {self.xmin}, {self.ymin}, {self.xmax}, {self.ymax}")
         self.data =  Data_in_memory(self.xmin, self.ymin, self.xmax, self.ymax)
         self.data.task_manager.taskAdded.connect(self.pause)
@@ -464,7 +464,7 @@ class qviz:
 
         curr_frame = self.temporalController.currentFrameNumber()
         print(f"\n\n\n\n\n\ncurr_frame : {curr_frame}")
-        if curr_frame == 1392:
+        if curr_frame == 240:
             self.pause()
             return
         if self.last_frame - curr_frame > 0:
@@ -489,7 +489,12 @@ class qviz:
         if curr_frame % FRAMES_PER_TIME_DELTA == 0:
             self.update_vlayer_content()
             print(f"DOTHRAKIS ARE COMING\n Time delta : {self.current_time_delta} : {self.data.timestamps_strings[self.current_time_delta]} \n Frame : {curr_frame}")
-    
+            # TODO : use self.canvas and reduce 4 float variables into 1 string
+            self.xmin = iface.mapCanvas().extent().xMinimum()
+            self.ymin = iface.mapCanvas().extent().yMinimum()
+            self.xmax = iface.mapCanvas().extent().xMaximum()
+            self.ymax = iface.mapCanvas().extent().yMaximum()
+            print(f"Extents : {self.xmin}, {self.ymin}, {self.xmax}, {self.ymax}")
             if self.direction == "back":
                 # Going back in time
                 self.current_time_delta = (curr_frame - FRAMES_PER_TIME_DELTA)
