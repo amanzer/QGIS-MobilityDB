@@ -35,7 +35,7 @@ LEN_DEQUEUE_BUFFER = 2 # Length of the dequeue to keep the keys to keep in the b
 
 PERCENTAGE_OF_SHIPS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
 FRAMES_PER_TIME_DELTA = 60 # Number of frames associated to one Time delta
-GRANULARITY = Time_granularity.MINUTE
+GRANULARITY = Time_granularity.SECOND
 
 class Data_in_memory:
     """
@@ -285,13 +285,13 @@ class MobilityDB_Database:
         connection_params = {
         "host": "localhost",
         "port": 5432,
-        "dbname": "mobilitydb",
+        "dbname": "lima_demo",
         "user": "postgres",
         "password": "postgres"
         }
         try: 
-            self.table_name = "PyMEOS_demo"
-            self.id_column_name = "MMSI"
+            self.table_name = "driver_paths"
+            self.id_column_name = "driver_id"
             self.tpoint_column_name = "trajectory"            
             self.SRID = 4326            
             self.connection = MobilityDB.connect(**connection_params)

@@ -22,13 +22,11 @@ from enum import Enum
 
 
 class Time_granularity(Enum):
-    MICROSECOND = timedelta(microseconds=1)
-    MILLISECOND = timedelta(milliseconds=1)
-    SECOND = timedelta(seconds=1)
-    MINUTE = timedelta(minutes=1)
-    HOUR = timedelta(hours=1)
-    DAY = timedelta(days=1)
-    WEEK = timedelta(weeks=1)
+    MILLISECOND = {"timedelta" : timedelta(milliseconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Milliseconds}
+    SECOND = {"timedelta" : timedelta(seconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Seconds}
+    MINUTE = {"timedelta" : timedelta(minutes=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Minutes}
+    HOUR = {"timedelta" : timedelta(hours=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Hours}
+  
 
 
 LEN_DEQUEUE_FPS = 5 # Length of the dequeue to calculate the average FPS
@@ -36,7 +34,7 @@ LEN_DEQUEUE_BUFFER = 2 # Length of the dequeue to keep the keys to keep in the b
 
 
 PERCENTAGE_OF_SHIPS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
-FRAMES_PER_TIME_DELTA = 48 # Number of frames associated to one Time delta
+FRAMES_PER_TIME_DELTA = 60 # Number of frames associated to one Time delta
 GRANULARITY = Time_granularity.MINUTE
 
 class Data_in_memory:
@@ -49,7 +47,7 @@ class Data_in_memory:
     def __init__(self, xmin, ymin, xmax, ymax):
 
         self.task_manager = QgsApplication.taskManager()
-        self.db = mobDB()
+        self.db = MobilityDB_Database()
         pymeos_initialize()
         
         self.xmin = xmin
@@ -57,7 +55,7 @@ class Data_in_memory:
         self.xmax = xmax
         self.ymax = ymax
 
-        self.mmsi_list = self.db.getMMSI(PERCENTAGE_OF_SHIPS) 
+        self.ids_list = self.db.get_subset_of_ids(PERCENTAGE_OF_SHIPS) 
         
         self.generate_timestamps()
 
@@ -65,32 +63,29 @@ class Data_in_memory:
         self.keys_to_keep = deque(maxlen=LEN_DEQUEUE_BUFFER)
         self.keys_to_keep.append(self.timestamps_strings[0])
         task = QgisThread(f"Batch requested for time delta {0} - {self.timestamps_strings[0]}", 0, self.timestamps_strings[0],
-                                     "qViz",self.db,self.mmsi_list, 0, FRAMES_PER_TIME_DELTA, self.xmin, self.ymin, self.xmax, self.ymax , self.timestamps, self.on_thread_completed, self.raise_error)
+                                     "qViz",self.db,self.ids_list, 0, FRAMES_PER_TIME_DELTA, self.xmin, self.ymin, self.xmax, self.ymax , self.timestamps, self.on_thread_completed, self.raise_error)
         
         self.task_manager.addTask(task)     
     
-
+    
     def generate_timestamps(self):
         """
         TODO : FRAMES_PER_TIME_DELTA should be defined here depending on the granularity selected
-        TODO : Granularity should be taken from Temporal Controller
-        TODO : 
-        Fetch min and max timestamps from the MobilityDB database
-
-        SELECT MIN(startTimestamp(trajectory)) AS earliest_timestamp
-        FROM pymeos_demo;
-
-        SELECT MAX(endTimestamp(trajectory)) AS latest_timestamp
-        FROM pymeos_demo;
+    
         """
-        start_date = datetime(2023, 6, 1, 0, 0, 0)
-        end_date = datetime(2023, 6, 1, 23, 59, 58)
-        self.total_frames = (end_date - start_date) // GRANULARITY.value
+        start_date = self.db.get_min_timestamp()
+        end_date = self.db.get_max_timestamp()
+        self.total_frames = (end_date - start_date) // GRANULARITY.value["timedelta"]
 
-        self.timestamps = [start_date + i * GRANULARITY.value for i in range(self.total_frames)]
+        self.timestamps = [start_date + i * GRANULARITY.value["timedelta"] for i in range(self.total_frames)]
         self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
 
-
+    def update_temporal_controller_extent(self, temporalController):
+        """
+        Updates the extent of the temporal controller to match the time range of the data.
+        """
+        time_range = QgsDateTimeRange(self.timestamps[0], self.timestamps[-1])
+        temporalController.setTemporalExtents(time_range)
 
     def update_keys_to_keep(self, current_frame, direction):
         """
@@ -137,7 +132,7 @@ class Data_in_memory:
             print(f"Fetching batch for {start_frame} to {end_frame} aka {self.timestamps_strings[start_frame]} to {self.timestamps_strings[end_frame]}")
 
             task = QgisThread(f"Batch requested for time delta {start_frame} - {self.timestamps_strings[start_frame]}", start_frame,delta_key,
-                                     "qViz",self.db,self.mmsi_list, start_frame, end_frame, xmin, ymin, xmax, ymax, self.timestamps, self.on_thread_completed, self.raise_error)
+                                     "qViz",self.db,self.ids_list, start_frame, end_frame, xmin, ymin, xmax, ymax, self.timestamps, self.on_thread_completed, self.raise_error)
 
             self.task_manager.addTask(task)        
 
@@ -213,14 +208,14 @@ class QgisThread(QgsTask):
     
     This allows to keep the UI responsive while the data is being fetched.
     """
-    def __init__(self, description, current_frame, delta_key, project_title,db,mmsi_list, pstart, pend, xmin, ymin, xmax, ymax, timestamps, finished_fnc,
+    def __init__(self, description, current_frame, delta_key, project_title,db,ids_list, pstart, pend, xmin, ymin, xmax, ymax, timestamps, finished_fnc,
                  failed_fnc):
         super(QgisThread, self).__init__(description, QgsTask.CanCancel)
         self.current_frame = current_frame
         self.delta_key = delta_key
         self.project_title = project_title
         self.db = db
-        self.mmsi_list = mmsi_list
+        self.ids_list = ids_list
         self.pstart = pstart
         self.pend = pend
         self.timestamps = timestamps
@@ -248,16 +243,16 @@ class QgisThread(QgsTask):
             stats = []
             now = time.time()
 
-            features = self.db.getTrajectories(self.mmsi_list, self.timestamps[self.pstart], self.timestamps[self.pend], self.xmin, self.ymin, self.xmax, self.ymax)
+            features = self.db.get_subset_of_tpoints(self.ids_list, self.timestamps[self.pstart], self.timestamps[self.pend], self.xmin, self.ymin, self.xmax, self.ymax)
             stats.append(f"Time to fetch subTpoints from MobilityDB : {time.time()-now} s")
 
             now2 = time.time()
             batch_coords = {}           
             for key in range(self.pstart,self.pend +1):
                 batch_coords[key] = []
-                for mmsi in self.mmsi_list:
+                for tpoint_id in self.ids_list:
                     try:
-                        coords = features[mmsi].value_at_timestamp(self.timestamps[key])
+                        coords = features[tpoint_id].value_at_timestamp(self.timestamps[key])
                         batch_coords[key].append((coords.x, coords.y))
                     except Exception as e:
                         continue
@@ -281,9 +276,9 @@ class QgisThread(QgsTask):
 
 
 
-class mobDB:
+class MobilityDB_Database:
     """
-    Singleton class used to connect to the MobilityDB database and retrieve the MMSI of ships and their trajectories.
+    Singleton class used to connect to the MobilityDB database.
     """
     
     def __init__(self):
@@ -295,67 +290,84 @@ class mobDB:
         "password": "postgres"
         }
         try: 
-            
+            self.table_name = "PyMEOS_demo"
+            self.id_column_name = "MMSI"
+            self.tpoint_column_name = "trajectory"            
+            self.SRID = 4326            
             self.connection = MobilityDB.connect(**connection_params)
 
             self.cursor = self.connection.cursor()
 
-            self.cursor.execute(f"SELECT MMSI FROM public.PyMEOS_demo;")
-            self.mmsi_list = self.cursor.fetchall()
+            self.cursor.execute(f"SELECT {self.id_column_name} FROM public.{self.table_name};")
+            self.ids_list = self.cursor.fetchall()
         except Exception as e:
             print(e)
 
-    def getMMSI(self, percentage=0.001):
+    def get_subset_of_ids(self, percentage=0.001):
         """
-        Fetch the MMSI of the ships in the database.
+        Returns a subset of the objects ids in the table, based on the given percentage.
         """
-        return self.mmsi_list[:int(len(self.mmsi_list)*percentage)]
+        return self.ids_list[:int(len(self.ids_list)*percentage)]
 
-    def getTrajectories(self, mmsi_list, pstart, pend, xmin, ymin, xmax, ymax):
+    def get_subset_of_tpoints(self, ids_list, pstart, pend, xmin, ymin, xmax, ymax):
         """
-        Fetch the trajectories of the ships in the mmsi_list between the start and end timestamps.
+        For each object in the ids_list :
+            Fetch the subset of the associated Tpoints between the start and end timestamps
+            contained in the STBOX defined by the xmin, ymin, xmax, ymax.
+             
         """
-        SRID = 4326
-        
         try:
             rows={}
-            for mmsi in mmsi_list:
-                ship_mmsi = mmsi[0]
+            for id in ids_list:
+                tpoint_id = id[0]
                 query = f"""
                         SELECT 
                             atStbox(
-                        a.trajectory::tgeompoint,
+                        a.{self.tpoint_column_name}::tgeompoint,
                         stbox(
                             ST_MakeEnvelope(
                             {xmin}, {ymin}, -- xmin, ymin
                             {xmax}, {ymax}, -- xmax, ymax
-                            {SRID} -- SRID
+                            {self.SRID} -- SRID
                             ),
                             tstzspan('[{pstart}, {pend}]')
                         )
                         )
-                            FROM public.PyMEOS_demo as a 
-                        WHERE a.MMSI = {ship_mmsi} ;
+                            FROM public.{self.table_name} as a 
+                        WHERE a.{self.id_column_name} = '{tpoint_id}' ;
                         """
                 self.cursor.execute(query)
-                #self.cursor.execute(f"SELECT attime(a.trajectory::tgeompoint,span('{pstart}'::timestamptz, '{pend}'::timestamptz, true, true))::tgeompoint FROM public.PyMEOS_demo as a WHERE a.MMSI = {ship_mmsi} ;")
-                trajectory = self.cursor.fetchone()
-                if trajectory[0]:
-                    rows[mmsi] = trajectory[0]
+                subset_tpoint = self.cursor.fetchone()
+                if subset_tpoint[0]:
+                    rows[id] = subset_tpoint[0]
 
             return rows
         except Exception as e:
             print(e)
 
-    def get_min_max_timestamps(self):
+    def get_min_timestamp(self):
         """
-        SELECT MIN(startTimestamp(trajectory)) AS earliest_timestamp
-        FROM pymeos_demo;
+        Returns the min timestamp of the tpoints columns.
 
-        SELECT MAX(endTimestamp(trajectory)) AS latest_timestamp
-        FROM pymeos_demo;
         """
-        pass
+        try:
+            
+            self.cursor.execute(f"SELECT MIN(startTimestamp({self.tpoint_column_name})) AS earliest_timestamp FROM public.{self.table_name};")
+            return self.cursor.fetchone()[0]
+        except Exception as e:
+            print(e)
+
+    def get_max_timestamp(self):
+        """
+        Returns the max timestamp of the tpoints columns.
+
+        """
+        try:
+            self.cursor.execute(f"SELECT MAX(endTimestamp({self.tpoint_column_name})) AS latest_timestamp FROM public.{self.table_name};")
+            return self.cursor.fetchone()[0]
+        except Exception as e:
+            print(e)
+
 
     def close(self):
         """
@@ -365,7 +377,7 @@ class mobDB:
         self.connection.close()
 
 
-class qviz:
+class QVIZ:
     """
 
     This class plays the role of the controller in the MVC pattern.
@@ -376,21 +388,24 @@ class qviz:
     def __init__(self):    
         self.create_vlayer()
         self.canvas = iface.mapCanvas()
-        self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:0"))
+        self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
         self.temporalController = self.canvas.temporalController()
         frame_rate = 30
         self.direction = "forward"
         self.temporalController.setFramesPerSecond(frame_rate)
+        interval = QgsInterval(1, GRANULARITY.value["qgs_unit"])
+        self.temporalController.setFrameDuration(interval)
 
-        # TODO : use self.canvas and reduce 4 float variables into 1 string  
-        self.xmin = -3.01733170955181862
-        self.ymin =  48.69190684846805084
-        self.xmax = 22.73323493966157827
-        self.ymax = 66.54173145758187502
+
+        # TODO : use self.canvas and reduce 4 float variables into 1 string
+        self.xmin = iface.mapCanvas().extent().xMinimum()
+        self.ymin = iface.mapCanvas().extent().yMinimum()
+        self.xmax = iface.mapCanvas().extent().xMaximum()
+        self.ymax = iface.mapCanvas().extent().yMaximum()
         print(f"Extents : {self.xmin}, {self.ymin}, {self.xmax}, {self.ymax}")
         self.data =  Data_in_memory(self.xmin, self.ymin, self.xmax, self.ymax)
         self.data.task_manager.taskAdded.connect(self.pause)
-        self.data.task_manager.allTasksFinished.connect(self.play)
+        #self.data.task_manager.allTasksFinished.connect(self.play)
         self.current_time_delta = 0
         self.last_frame = 0
         self.update_vlayer_content
@@ -402,8 +417,8 @@ class qviz:
         self.fps_record = []
         self.feature_number_record = []
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
-    
-
+        self.data.update_temporal_controller_extent(self.temporalController)
+        
     
     def play(self):
         """
@@ -464,7 +479,7 @@ class qviz:
 
         curr_frame = self.temporalController.currentFrameNumber()
         print(f"\n\n\n\n\n\ncurr_frame : {curr_frame}")
-        if curr_frame == 240:
+        if curr_frame == 1392:
             self.pause()
             return
         if self.last_frame - curr_frame > 0:
@@ -489,12 +504,8 @@ class qviz:
         if curr_frame % FRAMES_PER_TIME_DELTA == 0:
             self.update_vlayer_content()
             print(f"DOTHRAKIS ARE COMING\n Time delta : {self.current_time_delta} : {self.data.timestamps_strings[self.current_time_delta]} \n Frame : {curr_frame}")
-            # TODO : use self.canvas and reduce 4 float variables into 1 string
-            self.xmin = iface.mapCanvas().extent().xMinimum()
-            self.ymin = iface.mapCanvas().extent().yMinimum()
-            self.xmax = iface.mapCanvas().extent().xMaximum()
-            self.ymax = iface.mapCanvas().extent().yMaximum()
-            print(f"Extents : {self.xmin}, {self.ymin}, {self.xmax}, {self.ymax}")
+    
+         
             if self.direction == "back":
                 # Going back in time
                 self.current_time_delta = (curr_frame - FRAMES_PER_TIME_DELTA)
@@ -578,4 +589,4 @@ class qviz:
 
 
 
-tt = qviz()
+tt = QVIZ()

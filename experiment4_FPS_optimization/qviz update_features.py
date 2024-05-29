@@ -331,6 +331,7 @@ class qviz:
             self.dq_FPS.append(0.033)
 
         self.fps_record = []
+        self.feature_number_record = []
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         
      
@@ -352,24 +353,19 @@ class qviz:
         self.temporalController.pause()
 
 
-    def get_stats(self):
-        """
-        Returns the statistics of the time taken by each function.
-        """
-        # avg_value_at_timestamp = sum(self.data.STATS_value_at_timestamp)/len(self.data.STATS_value_at_timestamp)
-        # #avg_qgis_features = sum(self.data.STATS_qgis_features)/len(self.data.STATS_qgis_features)
-        # # show average in seconds
-        # print(f"Number of times value_at_timestamp was called: {len(self.data.STATS_value_at_timestamp)}")
-        # print(f"Average time to get value at timestamp: {avg_value_at_timestamp}s")
-        # print(f"Max time to get value at timestamp: {max(self.data.STATS_value_at_timestamp)}s")
-        # print(f"Min time to get value at timestamp: {min(self.data.STATS_value_at_timestamp)}s")
-        # #print(f"Average time to create QGIS features: {avg_qgis_features}")
-        pass
+ 
     def get_average_fps(self):
         """
         Returns the average FPS of the temporal controller.
         """
         return sum(self.fps_record)/len(self.fps_record)
+    
+    def get_average_feature_number(self):
+        """
+        Returns the average number of features displayed on the map.
+        """
+        return sum(self.feature_number_record)/len(self.feature_number_record)
+
     
 
     def generate_features(self):
