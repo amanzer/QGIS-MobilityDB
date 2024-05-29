@@ -47,7 +47,7 @@ class Data_in_memory:
     def __init__(self, xmin, ymin, xmax, ymax):
 
         self.task_manager = QgsApplication.taskManager()
-        self.db = mobDB()
+        self.db = MobilityDB_Database()
         pymeos_initialize()
         
         self.xmin = xmin
@@ -55,7 +55,7 @@ class Data_in_memory:
         self.xmax = xmax
         self.ymax = ymax
 
-        self.mmsi_list = self.db.getMMSI(PERCENTAGE_OF_SHIPS) 
+        self.mmsi_list = self.db.get_subset_of_ids(PERCENTAGE_OF_SHIPS) 
         
         self.generate_timestamps()
 
@@ -81,8 +81,8 @@ class Data_in_memory:
         SELECT MAX(endTimestamp(trajectory)) AS latest_timestamp
         FROM pymeos_demo;
         """
-        start_date = datetime(2023, 6, 1, 0, 0, 0)
-        end_date = datetime(2023, 6, 1, 23, 59, 58)
+        start_date = self.db.get_min_timestamp()
+        end_date = self.db.get_max_timestamp()
         self.total_frames = (end_date - start_date) // GRANULARITY.value["timedelta"]
 
         self.timestamps = [start_date + i * GRANULARITY.value["timedelta"] for i in range(self.total_frames)]
@@ -251,7 +251,7 @@ class QgisThread(QgsTask):
             stats = []
             now = time.time()
 
-            features = self.db.getTrajectories(self.mmsi_list, self.timestamps[self.pstart], self.timestamps[self.pend], self.xmin, self.ymin, self.xmax, self.ymax)
+            features = self.db.get_subset_of_tpoints(self.mmsi_list, self.timestamps[self.pstart], self.timestamps[self.pend], self.xmin, self.ymin, self.xmax, self.ymax)
             stats.append(f"Time to fetch subTpoints from MobilityDB : {time.time()-now} s")
 
             now2 = time.time()
@@ -284,9 +284,9 @@ class QgisThread(QgsTask):
 
 
 
-class mobDB:
+class MobilityDB_Database:
     """
-    Singleton class used to connect to the MobilityDB database and retrieve the MMSI of ships and their trajectories.
+    Singleton class used to connect to the MobilityDB database.
     """
     
     def __init__(self):
@@ -298,7 +298,10 @@ class mobDB:
         "password": "postgres"
         }
         try: 
-            
+            self.table_name = "PyMEOS_demo"
+            self.id_column_name = "MMSI"
+            self.tpoint_column_name = "trajectory"            
+            self.SRID = 4326            
             self.connection = MobilityDB.connect(**connection_params)
 
             self.cursor = self.connection.cursor()
@@ -308,57 +311,72 @@ class mobDB:
         except Exception as e:
             print(e)
 
-    def getMMSI(self, percentage=0.001):
+    def get_subset_of_ids(self, percentage=0.001):
         """
-        Fetch the MMSI of the ships in the database.
+        Returns a subset of the objects ids in the table, based on the given percentage.
         """
         return self.mmsi_list[:int(len(self.mmsi_list)*percentage)]
 
-    def getTrajectories(self, mmsi_list, pstart, pend, xmin, ymin, xmax, ymax):
+    def get_subset_of_tpoints(self, ids_list, pstart, pend, xmin, ymin, xmax, ymax):
         """
-        Fetch the trajectories of the ships in the mmsi_list between the start and end timestamps.
+        For each object in the ids_list :
+            Fetch the subset of the associated Tpoints between the start and end timestamps
+            contained in the STBOX defined by the xmin, ymin, xmax, ymax.
+             
         """
-        SRID = 4326
-        
         try:
             rows={}
-            for mmsi in mmsi_list:
-                ship_mmsi = mmsi[0]
+            for id in ids_list:
+                tpoint_id = id[0]
                 query = f"""
                         SELECT 
                             atStbox(
-                        a.trajectory::tgeompoint,
+                        a.{self.tpoint_column_name}::tgeompoint,
                         stbox(
                             ST_MakeEnvelope(
                             {xmin}, {ymin}, -- xmin, ymin
                             {xmax}, {ymax}, -- xmax, ymax
-                            {SRID} -- SRID
+                            {self.SRID} -- SRID
                             ),
                             tstzspan('[{pstart}, {pend}]')
                         )
                         )
-                            FROM public.PyMEOS_demo as a 
-                        WHERE a.MMSI = {ship_mmsi} ;
+                            FROM public.{self.table_name} as a 
+                        WHERE a.MMSI = {tpoint_id} ;
                         """
                 self.cursor.execute(query)
                 #self.cursor.execute(f"SELECT attime(a.trajectory::tgeompoint,span('{pstart}'::timestamptz, '{pend}'::timestamptz, true, true))::tgeompoint FROM public.PyMEOS_demo as a WHERE a.MMSI = {ship_mmsi} ;")
-                trajectory = self.cursor.fetchone()
-                if trajectory[0]:
-                    rows[mmsi] = trajectory[0]
+                subset_tpoint = self.cursor.fetchone()
+                if subset_tpoint[0]:
+                    rows[id] = subset_tpoint[0]
 
             return rows
         except Exception as e:
             print(e)
 
-    def get_min_max_timestamps(self):
+    def get_min_timestamp(self):
         """
-        SELECT MIN(startTimestamp(trajectory)) AS earliest_timestamp
-        FROM pymeos_demo;
+        Returns the min timestamp of the tpoints columns.
 
-        SELECT MAX(endTimestamp(trajectory)) AS latest_timestamp
-        FROM pymeos_demo;
         """
-        pass
+        try:
+            
+            self.cursor.execute(f"SELECT MIN(startTimestamp({self.tpoint_column_name})) AS earliest_timestamp FROM public.{self.table_name};")
+            return self.cursor.fetchone()[0]
+        except Exception as e:
+            print(e)
+
+    def get_max_timestamp(self):
+        """
+        Returns the max timestamp of the tpoints columns.
+
+        """
+        try:
+            self.cursor.execute(f"SELECT MAX(endTimestamp({self.tpoint_column_name})) AS latest_timestamp FROM public.{self.table_name};")
+            return self.cursor.fetchone()[0]
+        except Exception as e:
+            print(e)
+
 
     def close(self):
         """
@@ -368,7 +386,7 @@ class mobDB:
         self.connection.close()
 
 
-class qviz:
+class QVIZ:
     """
 
     This class plays the role of the controller in the MVC pattern.
@@ -584,4 +602,4 @@ class qviz:
 
 
 
-tt = qviz()
+tt = QVIZ()
