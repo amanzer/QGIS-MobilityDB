@@ -62,10 +62,10 @@ class Data_in_memory:
         self.coordinates_cache = {}
         self.time_delta_keys_in_memory = deque(maxlen=LEN_DEQUEUE_BUFFER)
         self.time_delta_keys_in_memory.append(self.timestamps_strings[0])
-        # task = QgisThread(f"Batch requested for time delta {0} - {self.timestamps_strings[0]}", 0, self.timestamps_strings[0],
-        #                              "qViz",self.db,self.ids_list, 0, FRAMES_PER_TIME_DELTA, self.st_box_extent , self.timestamps, self.on_thread_completed, self.raise_error)
+        task = QgisThread(f"Batch requested for time delta {0} - {self.timestamps_strings[0]}", 0, self.timestamps_strings[0],
+                                     "qViz",self.db,self.ids_list, 0, FRAMES_PER_TIME_DELTA, self.st_box_extent , self.timestamps, self.on_thread_completed, self.raise_error)
         
-        # self.task_manager.addTask(task)     
+        self.task_manager.addTask(task)     
     
     
     def generate_timestamps(self):
@@ -106,7 +106,7 @@ class Data_in_memory:
             self.time_delta_keys_in_memory.append(self.timestamps_strings[time_delta_key])
         elif direction == Animation_direction.BACKWARD:
             self.time_delta_keys_in_memory.appendleft(self.timestamps_strings[time_delta_key])
-        print(self.time_delta_keys_in_memory)
+  
         self.flush_buffer()
 
 
@@ -119,12 +119,8 @@ class Data_in_memory:
         #remove from buffer all the keys that are not in the keys_to_keep
         for key in list(self.coordinates_cache.keys()):
             if key not in self.time_delta_keys_in_memory:
-                print("Deleting key : ", key)
                 del self.coordinates_cache[key]
                 gc.collect() 
-        size_in_bytes = asizeof.asizeof(self.coordinates_cache)
-        size_in_megabytes = size_in_bytes / (1024 * 1024)
-        print(f"Total size of dictionary (including referenced objects): {size_in_megabytes:.6f} MB")
     
 
     def generate_qgis_points(self,current_time_delta, frame_number, vlayer_fields):
@@ -140,7 +136,6 @@ class Data_in_memory:
             qgis_fields_list = []
             
             datetime_obj = QDateTime.fromString(key, "yyyy-MM-dd HH:mm:ss")
-            now_value_at_ts_qgs_feature = time.time()
 
             current_batch = self.coordinates_cache[time_delta_key]
             current_frame_coords = current_batch[frame_number]
@@ -155,13 +150,9 @@ class Data_in_memory:
                 feat.setGeometry(geom) # Set its geometry
                 qgis_fields_list.append(feat)
 
-            
-            
-            print(f"QgsFeature generation time : {time.time() - now_value_at_ts_qgs_feature}")
-            print(f"Timestamp {key}", end=" ")
-            return qgis_fields_list
+            return qgis_fields_list # TODO : to numpy array
         except Exception as e:
-            print(e)
+            self.log(str(e))
             return []
 
 
@@ -172,8 +163,6 @@ class Data_in_memory:
         delta_key = self.timestamps_strings[start_frame]
 
         if end_frame  <= (len(self.timestamps)) and start_frame >= 0:
-            print(f"Fetching batch for {start_frame} to {end_frame} aka {self.timestamps_strings[start_frame]} to {self.timestamps_strings[end_frame]}")
-
             task = QgisThread(f"Batch requested for time delta {start_frame} - {self.timestamps_strings[start_frame]}", start_frame,delta_key,
                                      "qViz",self.db,self.ids_list, start_frame, end_frame, st_box_extent, self.timestamps, self.on_thread_completed, self.raise_error)
 
@@ -186,9 +175,7 @@ class Data_in_memory:
         """
         # check delta_key exists in buffer        
         self.coordinates_cache[params['delta_key']] = params['batch']
-        # display stats from task 
-        for stat in  params['stats']:
-            print(stat)
+   
         
 
 
@@ -243,16 +230,15 @@ class QgisThread(QgsTask):
         for the given time delta.
         """
         try:
-            stats = []
-            now = time.time()
+       
 
             features = self.db.get_subset_of_tpoints(self.ids_list, self.timestamps[self.pstart], self.timestamps[self.pend], self.st_box_extent)
-            stats.append(f"Time to fetch subTpoints from MobilityDB : {time.time()-now} s")
+    
 
-            now2 = time.time()
+            
             batch_coords = {}           
             for key in range(self.pstart,self.pend +1):
-                batch_coords[key] = []
+                batch_coords[key] = [] # TODO:  transform it into Numpy array 
                 for tpoint_id in self.ids_list:
                     try:
                         coords = features[tpoint_id].value_at_timestamp(self.timestamps[key])
@@ -262,12 +248,9 @@ class QgisThread(QgsTask):
             
             del features
             gc.collect()
-            stats.append(f"Time to get coordinates with Value_at_timestamp : {time.time()-now2} s")
-            stats.append(f"Total time for task : {time.time()-now} s")
             self.result_params = {
                 'delta_key': self.delta_key,
-                'batch' : batch_coords,
-                'stats': stats
+                'batch' : batch_coords
             }
         except psycopg2.Error as e:
             self.error_msg = str(e)
@@ -310,7 +293,7 @@ class MobilityDB_Database:
         """
         Returns a subset of the objects ids in the table, based on the given percentage.
         """
-        return self.ids_list[:int(len(self.ids_list)*percentage)]
+        return self.ids_list[:int(len(self.ids_list)*percentage)] # TODO : to numpy array
 
     def get_subset_of_tpoints(self, ids_list, pstart, pend, st_box_extent):
         """
@@ -346,7 +329,7 @@ class MobilityDB_Database:
 
             return rows
         except Exception as e:
-            print(e)
+            pass #TODO : Handle the exception
 
     def get_min_timestamp(self):
         """
@@ -358,7 +341,7 @@ class MobilityDB_Database:
             self.cursor.execute(f"SELECT MIN(startTimestamp({self.tpoint_column_name})) AS earliest_timestamp FROM public.{self.table_name};")
             return self.cursor.fetchone()[0]
         except Exception as e:
-            print(e)
+            pass #TODO : Handle the exception
 
     def get_max_timestamp(self):
         """
@@ -369,7 +352,7 @@ class MobilityDB_Database:
             self.cursor.execute(f"SELECT MAX(endTimestamp({self.tpoint_column_name})) AS latest_timestamp FROM public.{self.table_name};")
             return self.cursor.fetchone()[0]
         except Exception as e:
-            print(e)
+            pass #TODO : Handle the exception
 
 
     def close(self):
@@ -401,7 +384,6 @@ class QVIZ:
         self.temporalController.setFrameDuration(interval)
 
         st_box_extent  = self.get_current_st_box_extent()
-        print(f"extent : {st_box_extent}")
 
         # CREATE DATA HANDLER
         self.data =  Data_in_memory(st_box_extent)
@@ -483,40 +465,31 @@ class QVIZ:
             self.direction = Animation_direction.BACKWARD
             if curr_frame <= 0: # REACHED THE BEGINNING OF THE ANIMATION
                 self.temporalController.setCurrentFrameNumber(0)
-                print("Reached the beginning of the animation")
                 self.pause()
         else:
             self.direction = Animation_direction.FORWARD
             if curr_frame >= self.end_frame : # REACHED THE END OF THE ANIMATION
                 self.temporalController.setCurrentFrameNumber(self.end_frame)
-                print("Reached the end of the animation")
                 self.pause()
 
         self.last_frame = curr_frame
-        print(f"    get_animation_direction : {time.time()-TIME_get_animation_direction}")
     
     def get_current_st_box_extent(self):
         """
         Returns the current extent of the canvas.
         """
-        TIME_get_current_st_box_extent = time.time()
         st_box_extent = np.array([self.canvas.extent().xMinimum(), 
                          self.canvas.extent().yMinimum(), 
                          self.canvas.extent().xMaximum(), 
                          self.canvas.extent().yMaximum()])
-        print(f"extent : {st_box_extent}")
-        print(f"    get_current_st_box_extent : {time.time()-TIME_get_current_st_box_extent}")
         return st_box_extent
 
     def request_next_time_delta_thread(self, curr_frame):
         """
         Requests the content for the next Time delta to be stored in memory.
         """
-        TIME_request_next_time_delta_thread = time.time()
 
         self.update_vlayer_content()
-        print(f"$$$$NEXT_TIME_DELTA_REQUEST$$$$ \n [ Time delta  ({self.current_time_delta} : {self.data.timestamps_strings[self.current_time_delta]}) \n Frame : {curr_frame}")
-
         st_box_extent  = self.get_current_st_box_extent()
 
         if self.direction == Animation_direction.BACKWARD:
@@ -533,7 +506,6 @@ class QVIZ:
             self.data.update_cache_in_memory(curr_frame, self.direction)
             self.data.fetch_data_with_thread(start, end, st_box_extent)
         
-        print(f"    request_next_time_delta_thread : {time.time()-TIME_request_next_time_delta_thread}")
 
 
     def on_new_frame(self):
@@ -546,7 +518,6 @@ class QVIZ:
         TIME_new_frame = time.time()
 
         curr_frame = self.temporalController.currentFrameNumber()
-        print(f"\nFrame : {curr_frame}")
         
         self.get_animation_direction(curr_frame)
 
@@ -555,17 +526,14 @@ class QVIZ:
         else: 
             self.update_vlayer_content()
             print(self.direction)
-            new_frame_time = time.time()-TIME_new_frame
-            
-            print(f"Time for on_new_frame : {new_frame_time}")
-            self.update_frame_rate(new_frame_time)
+
+            self.update_frame_rate(time.time()-TIME_new_frame)
     
     
     def create_vlayer(self):
         """
         Creates a Qgis Vector layer in memory to store the points to be displayed on the map.
         """
-        TIME_create_vlayer = time.time()
         self.vlayer = QgsVectorLayer("Point", "MobilityBD Data", "memory")
         pr = self.vlayer.dataProvider()
         pr.addAttributes([QgsField("time", QVariant.DateTime)])
@@ -577,46 +545,33 @@ class QVIZ:
         self.vlayer.updateFields()
 
         QgsProject.instance().addMapLayer(self.vlayer)
-        print(f"    create_vlayer : {time.time()-TIME_create_vlayer}")
 
     
     def update_vlayer_content(self):
         """
         Updates the content of the vector layer displayed on the map.
         """
-        TIME_update_vlayer_content = time.time()
         self.delete_vlayer_features() # Deletes all previous points
         self.add_vlayer_features(self.last_frame)
-        print(f"    update_vlayer_content : {time.time()-TIME_update_vlayer_content}")
 
 
     def add_vlayer_features(self, currentFrameNumber=0):
         """
         Adds the points to the vector layer to be displayed for the current frame on the map.
         """
-        TIME_add_vlayer_features= time.time()
-
         qgis_fields_list = self.data.generate_qgis_points(self.current_time_delta,currentFrameNumber, self.vlayer.fields())
-        number_of_features = len(qgis_fields_list)
-        print(f" Added {number_of_features} features")
+     
         self.vlayer.startEditing()
-        self.vlayer.addFeatures(qgis_fields_list) # Add list of features to vlayer
+        self.vlayer.addFeatures(qgis_fields_list) # Add list of features to vlayer #TODO : would a numpy array work as well
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
-        
-        self.feature_number_record.append(number_of_features)
-        print(f"    add_vlayer_features : {time.time()-TIME_add_vlayer_features}")
 
     def delete_vlayer_features(self):
-        TIME_delete_vlayer_features = time.time()
-
         self.vlayer.startEditing()
         delete_ids = [f.id() for f in self.vlayer.getFeatures()]
         self.vlayer.deleteFeatures(delete_ids)
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
-
-        print(f"    delete_vlayer_features : {time.time()-TIME_delete_vlayer_features}")
 
 
 
