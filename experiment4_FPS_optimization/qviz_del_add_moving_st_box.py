@@ -28,6 +28,9 @@ class Time_granularity(Enum):
     HOUR = {"timedelta" : timedelta(hours=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Hours}
   
 
+class Animation_direction(Enum):
+    FORWARD = "1"
+    BACKWARD = "0"
 
 LEN_DEQUEUE_FPS = 5 # Length of the dequeue to calculate the average FPS
 LEN_DEQUEUE_BUFFER = 2 # Length of the dequeue to keep the keys to keep in the buffer
@@ -385,30 +388,34 @@ class QVIZ:
     
     It handles the interactions with both the Temporal Controller and the Vector Layer.
     """
-    def __init__(self):    
+    def __init__(self):  
+        # INITIATE UI ELEMENTS  
         self.create_vlayer()
         self.canvas = iface.mapCanvas()
         self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
         self.temporalController = self.canvas.temporalController()
         frame_rate = 30
-        self.direction = "forward"
+        self.direction = Animation_direction.FORWARD
         self.temporalController.setFramesPerSecond(frame_rate)
         interval = QgsInterval(1, GRANULARITY.value["qgs_unit"])
         self.temporalController.setFrameDuration(interval)
 
-        st_box_extent  = np.array([self.canvas.extent().xMinimum(), 
-                                   self.canvas.extent().yMinimum(), 
-                                   self.canvas.extent().xMaximum(), 
-                                   self.canvas.extent().yMaximum()])
+        st_box_extent  = self.get_current_st_box_extent
         print(f"extent : {st_box_extent}")
 
+        # CREATE DATA HANDLER
         self.data =  Data_in_memory(st_box_extent)
         self.data.task_manager.taskAdded.connect(self.pause)
+        self.end_frame = len(self.data.timestamps)- FRAMES_PER_TIME_DELTA
         #self.data.task_manager.allTasksFinished.connect(self.play)
+
+
+        # START ANIMATION
         self.current_time_delta = 0
         self.last_frame = 0
         self.update_vlayer_content
         
+        # TODO : We ultimately want a stable FPS, meaning the fluctuations should be the raised/lowered to the closest stable value ie 20, 25, 30 etc 
         self.dq_FPS = deque(maxlen=LEN_DEQUEUE_FPS)
         for i in range(LEN_DEQUEUE_FPS):
             self.dq_FPS.append(0.033)
@@ -425,7 +432,7 @@ class QVIZ:
         Plays the temporal controller animation.
         """
         self.update_vlayer_content()
-        if self.direction == "forward":
+        if self.direction == Animation_direction.FORWARD:
             self.temporalController.playForward()
         else:
             self.temporalController.playBackward()
@@ -466,7 +473,60 @@ class QVIZ:
         self.temporalController.setFramesPerSecond(fps)
         self.fps_record.append(fps)
 
+    def get_animation_direction(self, curr_frame):
+        """
+        Returns the current direction of the animation.
+        Udates the last_frame attribute.
+        """
+
+        if self.last_frame - curr_frame > 0:
+            self.direction = Animation_direction.BACKWARD
+            if curr_frame <= 0: # REACHED THE BEGINNING OF THE ANIMATION
+                self.temporalController.setCurrentFrameNumber(0)
+                print("Reached the beginning of the animation")
+                self.pause()
+        else:
+            self.direction = Animation_direction.FORWARD
+            if curr_frame >= self.end_frame : # REACHED THE END OF THE ANIMATION
+                self.temporalController.setCurrentFrameNumber(self.end_frame)
+                print("Reached the end of the animation")
+                self.pause()
+
+        self.last_frame = curr_frame
     
+    def get_current_st_box_extent(self):
+        """
+        Returns the current extent of the canvas.
+        """
+        return np.array([self.canvas.extent().xMinimum(), 
+                         self.canvas.extent().yMinimum(), 
+                         self.canvas.extent().xMaximum(), 
+                         self.canvas.extent().yMaximum()])
+
+    def request_next_time_delta_thread(self, curr_frame):
+        self.update_vlayer_content()
+        print(f"$$$$NEXT_TIME_DELTA_REQUEST$$$$ \n [ Time delta  ({self.current_time_delta} : {self.data.timestamps_strings[self.current_time_delta]}) \n Frame : {curr_frame}")
+
+        st_box_extent  = self.get_current_st_box_extent()
+        print(f"extent : {st_box_extent}")
+
+        if self.direction == Animation_direction.BACKWARD:
+            # Going back in time
+            self.current_time_delta = (curr_frame - FRAMES_PER_TIME_DELTA)
+            start = curr_frame-(FRAMES_PER_TIME_DELTA)
+            end = curr_frame
+            self.data.update_cache_in_memory(curr_frame-FRAMES_PER_TIME_DELTA, self.direction)
+            self.data.fetch_data_with_thread(start, end, st_box_extent) 
+
+        elif self.direction == Animation_direction.FORWARD:
+            # Going forward in time
+            self.current_time_delta = curr_frame
+            start = curr_frame
+            end = curr_frame+FRAMES_PER_TIME_DELTA
+            self.data.update_cache_in_memory(curr_frame, self.direction)
+            self.data.fetch_data_with_thread(start, end, st_box_extent)
+
+
     def on_new_frame(self):
         """
         TODO : Divide this function into smaller functions to make it more readable
@@ -474,61 +534,19 @@ class QVIZ:
         Function called every time the frame of the temporal controller is changed. 
         It updates the content of the vector layer displayed on the map.
         """
-        now = time.time()
+        TIME_new_frame = time.time()
 
         curr_frame = self.temporalController.currentFrameNumber()
-        print(f"\n\n\n\n\n\ncurr_frame : {curr_frame}")
-        if curr_frame == 1392:
-            self.pause()
-            return
-        if self.last_frame - curr_frame > 0:
-            self.direction = "back"
-            if curr_frame <= 0:
-                self.update_vlayer_content()
-                print(self.direction)
-                new_frame_time = time.time()-now
-                #print(f"Time for on_new_frame : {t}")
-                self.update_frame_rate(new_frame_time)
-        else:
-            self.direction = "forward"
-            if curr_frame >= len(self.data.timestamps)-1:
-                self.update_vlayer_content()
-                print(self.direction)
-                new_frame_time = time.time()-now
-                #print(f"Time for on_new_frame : {t}")
-                self.update_frame_rate(new_frame_time)
-
-        self.last_frame = curr_frame
+        print(f"\nFrame : {curr_frame}")
+        
+        self.get_animation_direction(curr_frame)
 
         if curr_frame % FRAMES_PER_TIME_DELTA == 0:
-            self.update_vlayer_content()
-            print(f"DOTHRAKIS ARE COMING\n Time delta : {self.current_time_delta} : {self.data.timestamps_strings[self.current_time_delta]} \n Frame : {curr_frame}")
-    
-            st_box_extent  = np.array([self.canvas.extent().xMinimum(), 
-                                   self.canvas.extent().yMinimum(), 
-                                   self.canvas.extent().xMaximum(), 
-                                   self.canvas.extent().yMaximum()])
-            print(f"extent : {st_box_extent}")
-
-            if self.direction == "back":
-                # Going back in time
-                self.current_time_delta = (curr_frame - FRAMES_PER_TIME_DELTA)
-                start = curr_frame-(FRAMES_PER_TIME_DELTA)
-                end = curr_frame
-                self.data.update_cache_in_memory(curr_frame-FRAMES_PER_TIME_DELTA, self.direction)
-                self.data.fetch_data_with_thread(start, end, st_box_extent) 
-
-            elif self.direction == "forward":
-                # Going forward in time
-                self.current_time_delta = curr_frame
-                start = curr_frame
-                end = curr_frame+FRAMES_PER_TIME_DELTA
-                self.data.update_cache_in_memory(curr_frame, self.direction)
-                self.data.fetch_data_with_thread(start, end, st_box_extent)
+            self.request_next_time_delta_thread(curr_frame)
         else: 
             self.update_vlayer_content()
             print(self.direction)
-            new_frame_time = time.time()-now
+            new_frame_time = time.time()-TIME_new_frame
             
 
             print(f"Time for on_new_frame : {new_frame_time}")
