@@ -16,7 +16,7 @@ from collections import deque
 from pympler import asizeof
 import gc
 from enum import Enum
-
+import numpy as np
 
 
 
@@ -44,34 +44,30 @@ class Data_in_memory:
     It is the link between the QGIS UI (temporal Controller/Vector Layer controlled by the qviz class) and the MobilityDB database.
     
     """
-    def __init__(self, xmin, ymin, xmax, ymax):
+    def __init__(self, st_box_extent):
 
         self.task_manager = QgsApplication.taskManager()
         self.db = MobilityDB_Database()
         pymeos_initialize()
         
-        self.xmin = xmin
-        self.ymin = ymin
-        self.xmax = xmax
-        self.ymax = ymax
+        self.st_box_extent = st_box_extent
 
         self.ids_list = self.db.get_subset_of_ids(PERCENTAGE_OF_SHIPS) 
         
         self.generate_timestamps()
 
-        self.buffer = {}
-        self.keys_to_keep = deque(maxlen=LEN_DEQUEUE_BUFFER)
-        self.keys_to_keep.append(self.timestamps_strings[0])
+        self.coordinates_cache = {}
+        self.time_delta_keys_in_memory = deque(maxlen=LEN_DEQUEUE_BUFFER)
+        self.time_delta_keys_in_memory.append(self.timestamps_strings[0])
         task = QgisThread(f"Batch requested for time delta {0} - {self.timestamps_strings[0]}", 0, self.timestamps_strings[0],
-                                     "qViz",self.db,self.ids_list, 0, FRAMES_PER_TIME_DELTA, self.xmin, self.ymin, self.xmax, self.ymax , self.timestamps, self.on_thread_completed, self.raise_error)
+                                     "qViz",self.db,self.ids_list, 0, FRAMES_PER_TIME_DELTA, self.st_box_extent , self.timestamps, self.on_thread_completed, self.raise_error)
         
         self.task_manager.addTask(task)     
     
     
     def generate_timestamps(self):
         """
-        TODO : FRAMES_PER_TIME_DELTA should be defined here depending on the granularity selected
-    
+        Generates the timestamps associated to each frame of the animation, based on the time range of the data.
         """
         start_date = self.db.get_min_timestamp()
         end_date = self.db.get_max_timestamp()
@@ -80,6 +76,7 @@ class Data_in_memory:
         self.timestamps = [start_date + i * GRANULARITY.value["timedelta"] for i in range(self.total_frames)]
         self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
 
+
     def update_temporal_controller_extent(self, temporalController):
         """
         Updates the extent of the temporal controller to match the time range of the data.
@@ -87,23 +84,28 @@ class Data_in_memory:
         time_range = QgsDateTimeRange(self.timestamps[0], self.timestamps[-1])
         temporalController.setTemporalExtents(time_range)
 
-    def update_keys_to_keep(self, current_frame, direction):
+
+    def update_cache_in_memory(self, time_delta_key, direction):
         """
-        TODO : Rename the methods related to the buffer and the buffer itself to make it more clear
+        GOAL :
+        We want the coordinates_cache dictionnary to only keep the values associated to the keys in the time_delta_keys_in_memory deque.
+        With this we ensure only the data necessary to the animation is in memory.
 
-        We want the buffer dictionnary to only keep the values associated to the keys in the keys_to_keep deque.
-        By doing this we can only keep in memory the data necessary to the animation.
+        1. Updates the deque with the time_delta_key.
+        2. Flushes the buffer to remove the keys/values not in the deque.
 
         """
-        key = self.timestamps_strings[current_frame]
+        key = self.timestamps_strings[time_delta_key]
 
-        if key in self.keys_to_keep:
+        if key in self.time_delta_keys_in_memory:
             return
         elif direction == "forward":
-            self.keys_to_keep.append(self.timestamps_strings[current_frame])
+            self.time_delta_keys_in_memory.append(self.timestamps_strings[time_delta_key])
         elif direction == "back":
-            self.keys_to_keep.appendleft(self.timestamps_strings[current_frame])
-        print(self.keys_to_keep)
+            self.time_delta_keys_in_memory.appendleft(self.timestamps_strings[time_delta_key])
+        print(self.time_delta_keys_in_memory)
+        self.flush_buffer()
+
 
     def flush_buffer(self):
         """
@@ -112,52 +114,15 @@ class Data_in_memory:
         Forecefully calls the garbage collector to free the memory.
         """
         #remove from buffer all the keys that are not in the keys_to_keep
-        for key in list(self.buffer.keys()):
-            if key not in self.keys_to_keep:
+        for key in list(self.coordinates_cache.keys()):
+            if key not in self.time_delta_keys_in_memory:
                 print("Deleting key : ", key)
-                del self.buffer[key]
+                del self.coordinates_cache[key]
                 gc.collect() 
-        size_in_bytes = asizeof.asizeof(self.buffer)
+        size_in_bytes = asizeof.asizeof(self.coordinates_cache)
         size_in_megabytes = size_in_bytes / (1024 * 1024)
         print(f"Total size of dictionary (including referenced objects): {size_in_megabytes:.6f} MB")
     
-
-    def fetch_data_with_thread(self, start_frame, end_frame, xmin, ymin, xmax, ymax):
-        """
-        Creates a thread to fetch the data from the MobilityDB database for the given time delta.
-        """
-        delta_key = self.timestamps_strings[start_frame]
-
-        if end_frame  <= (len(self.timestamps)) and start_frame >= 0:
-            print(f"Fetching batch for {start_frame} to {end_frame} aka {self.timestamps_strings[start_frame]} to {self.timestamps_strings[end_frame]}")
-
-            task = QgisThread(f"Batch requested for time delta {start_frame} - {self.timestamps_strings[start_frame]}", start_frame,delta_key,
-                                     "qViz",self.db,self.ids_list, start_frame, end_frame, xmin, ymin, xmax, ymax, self.timestamps, self.on_thread_completed, self.raise_error)
-
-            self.task_manager.addTask(task)        
-
-
-    def on_thread_completed(self, params):
-        """
-        Function called when a thread finishes its job to fetch the data from the MobilityDB database.
-        """
-        # check delta_key exists in buffer        
-        self.buffer[params['delta_key']] = params['batch']
-        # display stats from task 
-        for stat in  params['stats']:
-            print(stat)
-        
-
-
-    def raise_error(self, msg):
-        """
-        Function called when the task to fetch the data from the MobilityDB database failed.
-        """
-        if msg:
-            self.log("Error: " + msg)
-        else:
-            self.log("Unknown error")
-
 
     def generate_qgis_points(self,current_time_delta, frame_number, vlayer_fields):
         """
@@ -174,7 +139,7 @@ class Data_in_memory:
             datetime_obj = QDateTime.fromString(key, "yyyy-MM-dd HH:mm:ss")
             now_value_at_ts_qgs_feature = time.time()
 
-            current_batch = self.buffer[time_delta_key]
+            current_batch = self.coordinates_cache[time_delta_key]
             current_frame_coords = current_batch[frame_number]
             # class 'shapely.geometry.point.Point
             #current_frame_coords is a disctionary that contains 
@@ -196,6 +161,44 @@ class Data_in_memory:
             print(e)
             return []
 
+
+    def fetch_data_with_thread(self, start_frame, end_frame, st_box_extent):
+        """
+        Creates a thread to fetch the data from the MobilityDB database for the given time delta.
+        """
+        delta_key = self.timestamps_strings[start_frame]
+
+        if end_frame  <= (len(self.timestamps)) and start_frame >= 0:
+            print(f"Fetching batch for {start_frame} to {end_frame} aka {self.timestamps_strings[start_frame]} to {self.timestamps_strings[end_frame]}")
+
+            task = QgisThread(f"Batch requested for time delta {start_frame} - {self.timestamps_strings[start_frame]}", start_frame,delta_key,
+                                     "qViz",self.db,self.ids_list, start_frame, end_frame, st_box_extent, self.timestamps, self.on_thread_completed, self.raise_error)
+
+            self.task_manager.addTask(task)        
+
+
+    def on_thread_completed(self, params):
+        """
+        Function called when a thread finishes its job to fetch the data from the MobilityDB database.
+        """
+        # check delta_key exists in buffer        
+        self.coordinates_cache[params['delta_key']] = params['batch']
+        # display stats from task 
+        for stat in  params['stats']:
+            print(stat)
+        
+
+
+    def raise_error(self, msg):
+        """
+        Function called when the task to fetch the data from the MobilityDB database failed.
+        """
+        if msg:
+            self.log("Error: " + msg)
+        else:
+            self.log("Unknown error")
+
+
     def log(self, msg):
         QgsMessageLog.logMessage(msg, 'qViz', level=Qgis.Info)
 
@@ -208,7 +211,7 @@ class QgisThread(QgsTask):
     
     This allows to keep the UI responsive while the data is being fetched.
     """
-    def __init__(self, description, current_frame, delta_key, project_title,db,ids_list, pstart, pend, xmin, ymin, xmax, ymax, timestamps, finished_fnc,
+    def __init__(self, description, current_frame, delta_key, project_title,db,ids_list, pstart, pend, st_box_extent, timestamps, finished_fnc,
                  failed_fnc):
         super(QgisThread, self).__init__(description, QgsTask.CanCancel)
         self.current_frame = current_frame
@@ -219,10 +222,7 @@ class QgisThread(QgsTask):
         self.pstart = pstart
         self.pend = pend
         self.timestamps = timestamps
-        self.xmin = xmin
-        self.ymin = ymin
-        self.xmax = xmax
-        self.ymax = ymax
+        self.st_box_extent = st_box_extent
         self.finished_fnc = finished_fnc
         self.failed_fnc = failed_fnc
         self.result_params = None
@@ -243,7 +243,7 @@ class QgisThread(QgsTask):
             stats = []
             now = time.time()
 
-            features = self.db.get_subset_of_tpoints(self.ids_list, self.timestamps[self.pstart], self.timestamps[self.pend], self.xmin, self.ymin, self.xmax, self.ymax)
+            features = self.db.get_subset_of_tpoints(self.ids_list, self.timestamps[self.pstart], self.timestamps[self.pend], self.st_box_extent)
             stats.append(f"Time to fetch subTpoints from MobilityDB : {time.time()-now} s")
 
             now2 = time.time()
@@ -309,11 +309,11 @@ class MobilityDB_Database:
         """
         return self.ids_list[:int(len(self.ids_list)*percentage)]
 
-    def get_subset_of_tpoints(self, ids_list, pstart, pend, xmin, ymin, xmax, ymax):
+    def get_subset_of_tpoints(self, ids_list, pstart, pend, st_box_extent):
         """
         For each object in the ids_list :
             Fetch the subset of the associated Tpoints between the start and end timestamps
-            contained in the STBOX defined by the xmin, ymin, xmax, ymax.
+            contained in the STBOX defined by the st_box_extent.
              
         """
         try:
@@ -326,8 +326,8 @@ class MobilityDB_Database:
                         a.{self.tpoint_column_name}::tgeompoint,
                         stbox(
                             ST_MakeEnvelope(
-                            {xmin}, {ymin}, -- xmin, ymin
-                            {xmax}, {ymax}, -- xmax, ymax
+                            {st_box_extent[0]}, {st_box_extent[1]}, -- xmin, ymin
+                            {st_box_extent[2]}, {st_box_extent[3]}, -- xmax, ymax
                             {self.SRID} -- SRID
                             ),
                             tstzspan('[{pstart}, {pend}]')
@@ -396,14 +396,13 @@ class QVIZ:
         interval = QgsInterval(1, GRANULARITY.value["qgs_unit"])
         self.temporalController.setFrameDuration(interval)
 
+        st_box_extent  = np.array([self.canvas.extent().xMinimum(), 
+                                   self.canvas.extent().yMinimum(), 
+                                   self.canvas.extent().xMaximum(), 
+                                   self.canvas.extent().yMaximum()])
+        print(f"extent : {st_box_extent}")
 
-        # TODO : use self.canvas and reduce 4 float variables into 1 string
-        self.xmin = iface.mapCanvas().extent().xMinimum()
-        self.ymin = iface.mapCanvas().extent().yMinimum()
-        self.xmax = iface.mapCanvas().extent().xMaximum()
-        self.ymax = iface.mapCanvas().extent().yMaximum()
-        print(f"Extents : {self.xmin}, {self.ymin}, {self.xmax}, {self.ymax}")
-        self.data =  Data_in_memory(self.xmin, self.ymin, self.xmax, self.ymax)
+        self.data =  Data_in_memory(st_box_extent)
         self.data.task_manager.taskAdded.connect(self.pause)
         #self.data.task_manager.allTasksFinished.connect(self.play)
         self.current_time_delta = 0
@@ -505,28 +504,27 @@ class QVIZ:
             self.update_vlayer_content()
             print(f"DOTHRAKIS ARE COMING\n Time delta : {self.current_time_delta} : {self.data.timestamps_strings[self.current_time_delta]} \n Frame : {curr_frame}")
     
-            self.xmin = iface.mapCanvas().extent().xMinimum()
-            self.ymin = iface.mapCanvas().extent().yMinimum()
-            self.xmax = iface.mapCanvas().extent().xMaximum()
-            self.ymax = iface.mapCanvas().extent().yMaximum()
-            print(f"Extents : {self.xmin}, {self.ymin}, {self.xmax}, {self.ymax}")
+            st_box_extent  = np.array([self.canvas.extent().xMinimum(), 
+                                   self.canvas.extent().yMinimum(), 
+                                   self.canvas.extent().xMaximum(), 
+                                   self.canvas.extent().yMaximum()])
+            print(f"extent : {st_box_extent}")
+
             if self.direction == "back":
                 # Going back in time
                 self.current_time_delta = (curr_frame - FRAMES_PER_TIME_DELTA)
                 start = curr_frame-(FRAMES_PER_TIME_DELTA)
                 end = curr_frame
-                self.data.update_keys_to_keep(curr_frame-FRAMES_PER_TIME_DELTA, self.direction)
-                self.data.flush_buffer()
-                self.data.fetch_data_with_thread(start, end, self.xmin, self.ymin, self.xmax, self.ymax) 
+                self.data.update_cache_in_memory(curr_frame-FRAMES_PER_TIME_DELTA, self.direction)
+                self.data.fetch_data_with_thread(start, end, st_box_extent) 
 
             elif self.direction == "forward":
                 # Going forward in time
                 self.current_time_delta = curr_frame
                 start = curr_frame
                 end = curr_frame+FRAMES_PER_TIME_DELTA
-                self.data.update_keys_to_keep(curr_frame, self.direction)
-                self.data.flush_buffer()
-                self.data.fetch_data_with_thread(start, end, self.xmin, self.ymin, self.xmax, self.ymax)
+                self.data.update_cache_in_memory(curr_frame, self.direction)
+                self.data.fetch_data_with_thread(start, end, st_box_extent)
         else: 
             self.update_vlayer_content()
             print(self.direction)
