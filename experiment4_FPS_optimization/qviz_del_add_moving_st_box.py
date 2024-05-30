@@ -102,9 +102,9 @@ class Data_in_memory:
 
         if key in self.time_delta_keys_in_memory:
             return
-        elif direction == "forward":
+        elif direction == Animation_direction.FORWARD:
             self.time_delta_keys_in_memory.append(self.timestamps_strings[time_delta_key])
-        elif direction == "back":
+        elif direction == Animation_direction.BACKWARD:
             self.time_delta_keys_in_memory.appendleft(self.timestamps_strings[time_delta_key])
         print(self.time_delta_keys_in_memory)
         self.flush_buffer()
@@ -511,7 +511,6 @@ class QVIZ:
         print(f"extent : {st_box_extent}")
 
         if self.direction == Animation_direction.BACKWARD:
-            # Going back in time
             self.current_time_delta = (curr_frame - FRAMES_PER_TIME_DELTA)
             start = curr_frame-(FRAMES_PER_TIME_DELTA)
             end = curr_frame
@@ -519,7 +518,6 @@ class QVIZ:
             self.data.fetch_data_with_thread(start, end, st_box_extent) 
 
         elif self.direction == Animation_direction.FORWARD:
-            # Going forward in time
             self.current_time_delta = curr_frame
             start = curr_frame
             end = curr_frame+FRAMES_PER_TIME_DELTA
