@@ -100,6 +100,12 @@ class Data_in_memory:
         # check delta_key exists in buffer        
         self.matrix = params['matrix']
         # display stats from task 
+        self.log(f"Time to fetch data : {params['time']} seconds")
+        size_in_bytes = asizeof.asizeof(self.matrix)
+        size_in_megabytes = size_in_bytes / (1024 * 1024)
+        self.log(f"Total size of dictionary (including referenced objects): {size_in_megabytes:.6f} MB")
+
+ 
  
         
 
@@ -188,6 +194,7 @@ class QgisThread(QgsTask):
         for the given time delta.
         """
         try:
+            now = time.time()
             
             host = "localhost"
             port = 5432
@@ -245,9 +252,10 @@ class QgisThread(QgsTask):
                     pass
                     
 
-
+            total_time = time.time() - now
             self.result_params = {
-                'matrix': matrix
+                'matrix': matrix,
+                'time': total_time
                 
             }
         except psycopg2.Error as e:
