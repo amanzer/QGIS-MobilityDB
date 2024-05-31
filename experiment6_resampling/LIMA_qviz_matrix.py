@@ -34,7 +34,7 @@ class Time_granularity(Enum):
 LEN_DEQUEUE_FPS = 5 # Length of the dequeue to calculate the average FPS
 LEN_DEQUEUE_BUFFER = 2 # Length of the dequeue to keep the keys to keep in the buffer
 
-
+SRID = 24891 #PERU WEST ZONE
 PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
 FRAMES_PER_TIME_DELTA = 120 # Number of frames associated to one Time delta
 GRANULARITY = Time_granularity.SECOND
@@ -239,7 +239,7 @@ class MobilityDB_Database:
             self.table_name = "driver_paths"
             self.id_column_name = "driver_id"
             self.tpoint_column_name = "trajectory"            
-            self.SRID = 4326            
+            self.SRID = SRID            
             self.connection = MobilityDB.connect(**connection_params)
 
             self.cursor = self.connection.cursor()
@@ -318,7 +318,7 @@ class QVIZ:
     def __init__(self):    
         self.create_vlayer()
         self.canvas = iface.mapCanvas()
-        self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+        self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem(f"EPSG:{SRID}"))
         self.temporalController = self.canvas.temporalController()
         frame_rate = 60
         self.direction = "forward"
