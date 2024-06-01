@@ -1,9 +1,12 @@
 """
+libraries to install:
+    - pymeos
+    - psycopg2
+    - numpy
+    - shapely
+    - pympler
 
-- ADD/DEL QGS FEATURES EVERY FRAME
-
-- UPDATE STBOX EVERY TIME DELTA
-
+    
 """
 
 # TODO : Include the PYQGIS imports for the plugin
@@ -12,9 +15,7 @@ import psycopg2
 from pymeos import *
 from datetime import datetime, timedelta
 import time
-from collections import deque
 from pympler import asizeof
-import gc
 from enum import Enum
 import numpy as np
 from shapely.geometry import Point
@@ -31,12 +32,8 @@ class Time_granularity(Enum):
   
 
 
-LEN_DEQUEUE_FPS = 5 # Length of the dequeue to calculate the average FPS
-LEN_DEQUEUE_BUFFER = 2 # Length of the dequeue to keep the keys to keep in the buffer
-
 SRID = 4326
-PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
-FRAMES_PER_TIME_DELTA = 120 # Number of frames associated to one Time delta
+PERCENTAGE_OF_OBJECTS = 0.1 # Percentage of objects to be displayed from the dataset
 GRANULARITY = Time_granularity.MINUTE
 
 class Data_in_memory:
@@ -114,26 +111,20 @@ class Data_in_memory:
         key =  self.timestamps_strings[frame_number]
         datetime_obj = QDateTime.fromString(key, "yyyy-MM-dd HH:mm:ss")
         current_time_stamp_column =self.matrix[:, frame_number]
-        vlayer.startEditing()
 
         datetime_objs = {i: datetime_obj for i in range(len(self.ids_list))}
         new_geometries = {}  # Dictionary {feature_id: QgsGeometry}
 
       
-        for i in range(current_time_stamp_column.shape[0]):
+        for i in range(current_time_stamp_column.shape[0]): #TODO : compare vs Nditer
             # geometry = QgsGeometry.fromPointXY(QgsPointXY(coords[0], coords[1]))
             new_geometries[i] = QgsGeometry.fromWkt(current_time_stamp_column[i])
 
-
-        # Example data setup
-        
         vlayer.startEditing()
-
-        # Updating attribute values for multiple features
+        # Updating attribute values for all features
         attribute_changes = {fid: {0: datetime_objs[fid]} for fid in datetime_objs}
         vlayer.dataProvider().changeAttributeValues(attribute_changes)
-
-        # Updating geometries for multiple features
+        # Updating geometries for all features
         vlayer.dataProvider().changeGeometryValues(new_geometries)
 
 
@@ -149,8 +140,9 @@ class Data_in_memory:
 class QgisThread(QgsTask):
     """
     Creates a thread that fetches data from the MobilityDB database 
-    Parameters include : the time delta, STBOX paramters, Time range...
     
+    It creates and fills the matrix.
+
     This allows to keep the UI responsive while the data is being fetched.
     """
     def __init__(self, description, project_title,db, timestamps, ids_list, finished_fnc,
@@ -173,8 +165,7 @@ class QgisThread(QgsTask):
 
     def run(self):
         """
-        Function that is executed in parallel to fetch all the subsets of Tpoints from the MobilityDB database,
-        for the given time delta.
+        Creates the matrix of points for all frames and ids in ids_list
         """
         try:
             now = time.time()
@@ -232,7 +223,7 @@ class MobilityDB_Database:
     """
     
     def __init__(self):
-        connection_params = {
+        connection_params = { #TODO Remove the hardcoded values and use the QGIS UI to set the connection parameters
         "host": "localhost",
         "port": 5432,
         "dbname": "mobilitydb",
@@ -332,9 +323,6 @@ class QVIZ:
 
 
         self.data =  Data_in_memory()
-        # self.data.task_manager.taskAdded.connect(self.pause)
-        #self.data.task_manager.allTasksFinished.connect(self.play)
-        self.current_time_delta = 0
         self.last_frame = 0
         self.generate_qgs_features(self.data.timestamps_strings[0], self.data.ids_list)
 
@@ -345,16 +333,6 @@ class QVIZ:
         self.canvas.extentsChanged.connect(self.pause)
         self.data.update_temporal_controller_extent(self.temporalController)
         
-    def play(self):
-        """
-        TODO : self.direction has to be replaced by the animation state of the Temporal Controller
-        Plays the temporal controller animation.
-        """
-        if self.direction == "forward":
-            self.temporalController.playForward()
-        else:
-            self.temporalController.playBackward()
-            
 
     def pause(self):
         """
@@ -421,7 +399,7 @@ class QVIZ:
         QgsProject.instance().addMapLayer(self.vlayer)
 
     
-    def generate_qgs_features(self, start_time ,ids_list):
+    def generate_qgs_features(self, start_time ,ids_list): # TODO : Move to the Data_in_memory class
         datetime_obj = QDateTime.fromString(start_time, "yyyy-MM-dd HH:mm:ss")
         vlayer_fields = self.vlayer.fields()
 
