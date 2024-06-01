@@ -73,6 +73,35 @@ class Data_in_memory:
         self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
 
 
+    def generate_qgs_features(self, vlayer):
+        """
+        This method creates the QGIS features for each coordinate associated to the given
+        time delta and frame number.
+        """
+        datetime_obj = QDateTime.fromString(self.timestamps_strings[0], "yyyy-MM-dd HH:mm:ss")
+        vlayer_fields = vlayer.fields()
+
+        empty_point_wkt = Point().wkt  # "POINT EMPTY"
+        # create a numpy array of size len(ids_list) with empty_point_wkt
+        starting_points = np.full((1, len(self.ids_list)), empty_point_wkt, dtype=object)
+    
+        qgis_fields_list = []
+        
+        for wkt in np.nditer(starting_points, flags=['refs_ok']):
+            feat = QgsFeature(vlayer_fields)
+            feat.setAttributes([datetime_obj])  # Set its attributes
+
+            # Create geometry from WKT string
+            geom = QgsGeometry.fromWkt(wkt.item())
+            feat.setGeometry(geom)  # Set its geometry
+            qgis_fields_list.append(feat)
+        
+        vlayer.startEditing()
+        vlayer.addFeatures(qgis_fields_list) # Add list of features to vlayer
+        vlayer.commitChanges()
+        iface.vectorLayerTools().stopEditing(vlayer)
+
+
     def update_temporal_controller_extent(self, temporalController):
         """
         Updates the extent of the temporal controller to match the time range of the data.
@@ -324,7 +353,7 @@ class QVIZ:
 
         self.data =  Data_in_memory()
         self.last_frame = 0
-        self.generate_qgs_features(self.data.timestamps_strings[0], self.data.ids_list)
+        self.data.generate_qgs_features(self.vlayer)
 
         self.fps_record = []
         self.feature_number_record = []
@@ -398,30 +427,6 @@ class QVIZ:
 
         QgsProject.instance().addMapLayer(self.vlayer)
 
-    
-    def generate_qgs_features(self, start_time ,ids_list): # TODO : Move to the Data_in_memory class
-        datetime_obj = QDateTime.fromString(start_time, "yyyy-MM-dd HH:mm:ss")
-        vlayer_fields = self.vlayer.fields()
-
-        empty_point_wkt = Point().wkt  # "POINT EMPTY"
-        # create a numpy array of size len(ids_list) with empty_point_wkt
-        starting_points = np.full((1, len(ids_list)), empty_point_wkt, dtype=object)
-    
-        qgis_fields_list = []
-        
-        for wkt in np.nditer(starting_points, flags=['refs_ok']):
-            feat = QgsFeature(vlayer_fields)
-            feat.setAttributes([datetime_obj])  # Set its attributes
-
-            # Create geometry from WKT string
-            geom = QgsGeometry.fromWkt(wkt.item())
-            feat.setGeometry(geom)  # Set its geometry
-            qgis_fields_list.append(feat)
-        
-        self.vlayer.startEditing()
-        self.vlayer.addFeatures(qgis_fields_list) # Add list of features to vlayer
-        self.vlayer.commitChanges()
-        iface.vectorLayerTools().stopEditing(self.vlayer)
             
 
     def log(self, msg):
