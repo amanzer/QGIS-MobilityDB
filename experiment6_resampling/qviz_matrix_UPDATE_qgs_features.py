@@ -110,22 +110,40 @@ class Data_in_memory:
         """
         Updates the features of the vector layer for the given frame number.
         """
+        now = time.time()
         key =  self.timestamps_strings[frame_number]
         datetime_obj = QDateTime.fromString(key, "yyyy-MM-dd HH:mm:ss")
         current_time_stamp_column =self.matrix[:, frame_number]
         vlayer.startEditing()
 
-        # can I do something similar to enumerate with np.nditer to get index and value
+        datetime_objs = {i: datetime_obj for i in range(len(self.ids_list))}
+        new_geometries = {}  # Dictionary {feature_id: QgsGeometry}
+
+      
         for i in range(current_time_stamp_column.shape[0]):
             # geometry = QgsGeometry.fromPointXY(QgsPointXY(coords[0], coords[1]))
-            geom = QgsGeometry.fromWkt(current_time_stamp_column[i])
+            new_geometries[i] = QgsGeometry.fromWkt(current_time_stamp_column[i])
 
-            vlayer.changeGeometry(i, geom)
-            vlayer.changeAttributeValue(i, 0, datetime_obj)
+
+        # Example data setup
+        
+        vlayer.startEditing()
+
+        # Updating attribute values for multiple features
+        attribute_changes = {fid: {0: datetime_objs[fid]} for fid in datetime_objs}
+        vlayer.dataProvider().changeAttributeValues(attribute_changes)
+
+        # Updating geometries for multiple features
+        vlayer.dataProvider().changeGeometryValues(new_geometries)
+
 
         vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(vlayer)
 
+        self.log(f"Time to update the features : {time.time()-now} seconds")
+
+    def log(self, msg):
+        QgsMessageLog.logMessage(msg, 'qViz', level=Qgis.Info)
 
 
 class QgisThread(QgsTask):
@@ -354,23 +372,18 @@ class QVIZ:
 
     def update_frame_rate(self, new_frame_time):
         """
-        Updates the frame rate of the temporal controller.
+        Updates the frame rate of the temporal controller to be the closest multiple of 5,
+        favoring the lower value in case of an exact halfway.
         """
-        # self.dq_FPS.append(new_frame_time)
-        # avg_frame_time = (sum(self.dq_FPS)/LEN_DEQUEUE_FPS)
-        # optimal_fps = 1 / avg_frame_time
-        # print(f"Average time for On_new_frame : {avg_frame_time}")
+        # Calculating the optimal FPS based on the new frame time
         optimal_fps = 1 / new_frame_time
         
-        #  # Define the set of target FPS values
-        # target_fps_values = [15, 20, 30, 60]
-        
-        # # Choose the closest target FPS value
-        # fps = min(target_fps_values, key=lambda x: abs(x - optimal_fps))
-        
-        fps =  min(optimal_fps, 60)
+        # Round to the nearest multiple of 5
+        closest_multiple_of_5 = int(optimal_fps / 5) * 5
+     
 
-
+        # Ensure FPS does not exceed 60
+        fps = min(closest_multiple_of_5, 60)
 
         self.temporalController.setFramesPerSecond(fps)
         self.log(f"FPS : {fps} - Calculated FPS : {optimal_fps}")
