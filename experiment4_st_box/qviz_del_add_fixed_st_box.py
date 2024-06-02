@@ -65,7 +65,18 @@ class Data_in_memory:
         task = QgisThread(f"Batch requested for time delta {0} - {self.timestamps_strings[0]}", 0, self.timestamps_strings[0],
                                      "qViz",self.db,self.ids_list, 0, FRAMES_PER_TIME_DELTA, self.xmin, self.ymin, self.xmax, self.ymax , self.timestamps, self.on_thread_completed, self.raise_error)
         
+        task.taskCompleted.connect(self.second_batch)
         self.task_manager.addTask(task)     
+
+    def second_batch(self):
+        """
+        Function called when the first thread finishes its job to fetch the data from the MobilityDB database.
+        """
+
+       
+        task = QgisThread(f"Batch requested for time delta {FRAMES_PER_TIME_DELTA} - {self.timestamps_strings[FRAMES_PER_TIME_DELTA]}", FRAMES_PER_TIME_DELTA, self.timestamps_strings[FRAMES_PER_TIME_DELTA],
+                                     "qViz",self.db,self.ids_list, FRAMES_PER_TIME_DELTA, 2*FRAMES_PER_TIME_DELTA, self.xmin, self.ymin, self.xmax, self.ymax , self.timestamps, self.on_thread_completed, self.raise_error)
+        self.task_manager.addTask(task)
     
     
     def generate_timestamps(self):
@@ -103,7 +114,7 @@ class Data_in_memory:
             self.keys_to_keep.append(self.timestamps_strings[current_frame])
         elif direction == "back":
             self.keys_to_keep.appendleft(self.timestamps_strings[current_frame])
-        print(self.keys_to_keep)
+      
 
     def flush_buffer(self):
         """
@@ -114,12 +125,8 @@ class Data_in_memory:
         #remove from buffer all the keys that are not in the keys_to_keep
         for key in list(self.buffer.keys()):
             if key not in self.keys_to_keep:
-                print("Deleting key : ", key)
                 del self.buffer[key]
                 gc.collect() 
-        size_in_bytes = asizeof.asizeof(self.buffer)
-        size_in_megabytes = size_in_bytes / (1024 * 1024)
-        print(f"Total size of dictionary (including referenced objects): {size_in_megabytes:.6f} MB")
     
 
     def fetch_data_with_thread(self, start_frame, end_frame, xmin, ymin, xmax, ymax):
@@ -129,8 +136,6 @@ class Data_in_memory:
         delta_key = self.timestamps_strings[start_frame]
 
         if end_frame  <= (len(self.timestamps)) and start_frame >= 0:
-            print(f"Fetching batch for {start_frame} to {end_frame} aka {self.timestamps_strings[start_frame]} to {self.timestamps_strings[end_frame]}")
-
             task = QgisThread(f"Batch requested for time delta {start_frame} - {self.timestamps_strings[start_frame]}", start_frame,delta_key,
                                      "qViz",self.db,self.ids_list, start_frame, end_frame, xmin, ymin, xmax, ymax, self.timestamps, self.on_thread_completed, self.raise_error)
 
@@ -143,10 +148,7 @@ class Data_in_memory:
         """
         # check delta_key exists in buffer        
         self.buffer[params['delta_key']] = params['batch']
-        # display stats from task 
-        for stat in  params['stats']:
-            print(stat)
-        
+   
 
 
     def raise_error(self, msg):
@@ -189,11 +191,10 @@ class Data_in_memory:
 
             
             
-            print(f"QgsFeature generation time : {time.time() - now_value_at_ts_qgs_feature}")
-            print(f"Timestamp {key}", end=" ")
+           
             return qgis_fields_list
         except Exception as e:
-            print(e)
+            
             return []
 
     def log(self, msg):
@@ -240,13 +241,10 @@ class QgisThread(QgsTask):
         for the given time delta.
         """
         try:
-            stats = []
-            now = time.time()
+ 
 
             features = self.db.get_subset_of_tpoints(self.ids_list, self.timestamps[self.pstart], self.timestamps[self.pend], self.xmin, self.ymin, self.xmax, self.ymax)
-            stats.append(f"Time to fetch subTpoints from MobilityDB : {time.time()-now} s")
-
-            now2 = time.time()
+         
             batch_coords = {}           
             for key in range(self.pstart,self.pend +1):
                 batch_coords[key] = []
@@ -259,12 +257,11 @@ class QgisThread(QgsTask):
             
             del features
             gc.collect()
-            stats.append(f"Time to get coordinates with Value_at_timestamp : {time.time()-now2} s")
-            stats.append(f"Total time for task : {time.time()-now} s")
+        
             self.result_params = {
                 'delta_key': self.delta_key,
                 'batch' : batch_coords,
-                'stats': stats
+              
             }
         except psycopg2.Error as e:
             self.error_msg = str(e)
@@ -301,7 +298,7 @@ class MobilityDB_Database:
             self.cursor.execute(f"SELECT {self.id_column_name} FROM public.{self.table_name};")
             self.ids_list = self.cursor.fetchall()
         except Exception as e:
-            print(e)
+            pass
 
     def get_subset_of_ids(self, percentage=0.001):
         """
@@ -343,7 +340,7 @@ class MobilityDB_Database:
 
             return rows
         except Exception as e:
-            print(e)
+            pass
 
     def get_min_timestamp(self):
         """
@@ -355,7 +352,7 @@ class MobilityDB_Database:
             self.cursor.execute(f"SELECT MIN(startTimestamp({self.tpoint_column_name})) AS earliest_timestamp FROM public.{self.table_name};")
             return self.cursor.fetchone()[0]
         except Exception as e:
-            print(e)
+            pass
 
     def get_max_timestamp(self):
         """
@@ -366,7 +363,7 @@ class MobilityDB_Database:
             self.cursor.execute(f"SELECT MAX(endTimestamp({self.tpoint_column_name})) AS latest_timestamp FROM public.{self.table_name};")
             return self.cursor.fetchone()[0]
         except Exception as e:
-            print(e)
+            pass
 
 
     def close(self):
@@ -402,10 +399,9 @@ class QVIZ:
         self.ymin = iface.mapCanvas().extent().yMinimum()
         self.xmax = iface.mapCanvas().extent().xMaximum()
         self.ymax = iface.mapCanvas().extent().yMaximum()
-        print(f"Extents : {self.xmin}, {self.ymin}, {self.xmax}, {self.ymax}")
         self.data =  Data_in_memory(self.xmin, self.ymin, self.xmax, self.ymax)
         self.data.task_manager.taskAdded.connect(self.pause)
-        #self.data.task_manager.allTasksFinished.connect(self.play)
+        self.data.task_manager.allTasksFinished.connect(self.play)
         self.current_time_delta = 0
         self.last_frame = 0
         self.update_vlayer_content
@@ -460,13 +456,15 @@ class QVIZ:
         # avg_frame_time = (sum(self.dq_FPS)/LEN_DEQUEUE_FPS)
         # print(f"Average time for On_new_frame : {avg_frame_time}")
         optimal_fps = 1 / new_frame_time
-        print(f"Optimal FPS : {optimal_fps} (FPS = 1/frame_gen_time)") 
         fps =  optimal_fps
 
 
         self.temporalController.setFramesPerSecond(fps)
         self.fps_record.append(fps)
+        self.log(f"FPS : {optimal_fps}")
 
+    def log(self, msg):
+        QgsMessageLog.logMessage(msg, 'qViz', level=Qgis.Info)
     
     def on_new_frame(self):
         """
@@ -478,7 +476,6 @@ class QVIZ:
         now = time.time()
 
         curr_frame = self.temporalController.currentFrameNumber()
-        print(f"\n\n\n\n\n\ncurr_frame : {curr_frame}")
         if curr_frame == 1392:
             self.pause()
             return
@@ -486,25 +483,20 @@ class QVIZ:
             self.direction = "back"
             if curr_frame <= 0:
                 self.update_vlayer_content()
-                print(self.direction)
                 new_frame_time = time.time()-now
-                #print(f"Time for on_new_frame : {t}")
                 self.update_frame_rate(new_frame_time)
         else:
             self.direction = "forward"
             if curr_frame >= len(self.data.timestamps)-1:
                 self.update_vlayer_content()
-                print(self.direction)
                 new_frame_time = time.time()-now
-                #print(f"Time for on_new_frame : {t}")
                 self.update_frame_rate(new_frame_time)
 
         self.last_frame = curr_frame
 
         if curr_frame % FRAMES_PER_TIME_DELTA == 0:
             self.update_vlayer_content()
-            print(f"DOTHRAKIS ARE COMING\n Time delta : {self.current_time_delta} : {self.data.timestamps_strings[self.current_time_delta]} \n Frame : {curr_frame}")
-    
+        
          
             if self.direction == "back":
                 # Going back in time
@@ -518,18 +510,15 @@ class QVIZ:
             elif self.direction == "forward":
                 # Going forward in time
                 self.current_time_delta = curr_frame
-                start = curr_frame
-                end = curr_frame+FRAMES_PER_TIME_DELTA
+                start = curr_frame+FRAMES_PER_TIME_DELTA
+                end = curr_frame+(2*FRAMES_PER_TIME_DELTA)
                 self.data.update_keys_to_keep(curr_frame, self.direction)
                 self.data.flush_buffer()
                 self.data.fetch_data_with_thread(start, end, self.xmin, self.ymin, self.xmax, self.ymax)
         else: 
             self.update_vlayer_content()
-            print(self.direction)
             new_frame_time = time.time()-now
-            
-
-            print(f"Time for on_new_frame : {new_frame_time}")
+        
             self.update_frame_rate(new_frame_time)
     
     def update_vlayer_content(self):
@@ -565,25 +554,20 @@ class QVIZ:
         now= time.time()
 
         qgis_fields_list = self.data.generate_qgis_points(self.current_time_delta,currentFrameNumber, self.vlayer.fields())
-        number_of_features = len(qgis_fields_list)
-        print(f" Added {number_of_features} features")
+
         self.vlayer.startEditing()
         self.vlayer.addFeatures(qgis_fields_list) # Add list of features to vlayer
         self.vlayer.commitChanges()
         iface.vectorLayerTools().stopEditing(self.vlayer)
-        print(f"add_valyer_features time : {time.time()-now}")
-        self.feature_number_record.append(number_of_features)
+
         
 
     def delete_vlayer_features(self):
-        now= time.time()
         self.vlayer.startEditing()
         delete_ids = [f.id() for f in self.vlayer.getFeatures()]
         self.vlayer.deleteFeatures(delete_ids)
         self.vlayer.commitChanges()
-        iface.vectorLayerTools().stopEditing(self.vlayer)
-
-        print(f"delete_vlayer_features time : {time.time()-now}")
+    
 
 
 
