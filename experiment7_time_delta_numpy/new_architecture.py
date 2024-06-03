@@ -37,7 +37,7 @@ TIME_DELTA_DEQUEUE_SIZE = 3 # Length of the dequeue to keep the keys to keep in 
 
 
 PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 240 # Number of frames associated to one Time delta
+TIME_DELTA_SIZE = 48 # Number of frames associated to one Time delta
 GRANULARITY = Time_granularity.MINUTE
 SRID = 4326
 
@@ -78,9 +78,9 @@ class Time_deltas_handler:
                                      self.db, self.qviz.get_canvas_extent(), self.timestamps, self.on_thread_completed, self.raise_error)
 
         # Start the animation when the first batch is fetched
-        task.taskCompleted.connect(self.new_frame_features)
+        task.taskCompleted.connect(self.initiate_animation)
         self.task_manager.addTask(task)     
-        self.task_manager.allTasksFinished.connect(self.update_vlayer_features)
+        # self.task_manager.allTasksFinished.connect(self.update_vlayer_features)
     
     def initiate_animation(self):
         """
@@ -106,6 +106,7 @@ class Time_deltas_handler:
         self.total_frames = math.ceil( (end_date - start_date) // GRANULARITY.value["timedelta"] )
 
         self.timestamps = [start_date + i * GRANULARITY.value["timedelta"] for i in range(self.total_frames)]
+        self.timestamps = [dt.replace(tzinfo=None) for dt in self.timestamps]
         self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
         self.log(f"get_timestamps : total_frames : {self.total_frames}, start: {self.timestamps_strings[0]} - end : {self.timestamps_strings[-1]}")
         
@@ -143,9 +144,9 @@ class Time_deltas_handler:
                 self.time_deltas_to_keep.appendleft(self.timestamps_strings[time_delta_key])
             
             # Remove all data associated to keys no longer in time_deltas_to_keep
-            for key in list(self.buffer.keys()):
-                if key not in self.keys_to_keep:
-                    del self.buffer[key]
+            for key in list(self.time_deltas_matrices.keys()):
+                if key not in self.time_deltas_to_keep:
+                    del self.time_deltas_matrices[key]
                     # gc.collect() #TODO measure time impact
 
     
@@ -162,7 +163,8 @@ class Time_deltas_handler:
         beg_frame = time_delta_key
         end_frame = (time_delta_key + TIME_DELTA_SIZE) -1
 
-        if end_frame  <= (len(self.timestamps)) and start_frame >= 0: #Either bound has to be valid 
+        if end_frame  <= (len(self.timestamps)) and beg_frame >= 0: #Either bound has to be valid 
+            self.qviz.pause()
             task = QgisThread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
                                      self.db, self.qviz.get_canvas_extent(), self.timestamps, self.on_thread_completed, self.raise_error)
 
@@ -173,7 +175,8 @@ class Time_deltas_handler:
         """
         Store the time delta data fetched by the thread.
         """
-        self.time_deltas_matrices[params['time_delta_key']] = params['matrix']
+        self.log(f" parameters : {params}")
+        self.time_deltas_matrices[params['key']] = params['matrix']
      
     
 
@@ -217,7 +220,7 @@ class Time_deltas_handler:
         iface.vectorLayerTools().stopEditing(self.qviz.vlayer)
         
 
-    def new_frame_features(self, frame_number):
+    def new_frame_features(self, frame_number=0):
         """
         Handles the logic at each frame change.
         
@@ -230,16 +233,18 @@ class Time_deltas_handler:
         if self.previous_frame - frame_number < 0:
             self.direction = 1
             if frame_number >= self.total_frames: # Reached the end of the animation, pause
-                self.pause()
+                self.qviz.pause()
         else:
             self.direction = 0
             if frame_number <= 0: # Reached the beginning of the animation, pause
-                self.pause()
+                self.qviz.pause()
             
         self.previous_frame = frame_number
 
         if frame_number == self.current_time_delta_end and self.direction == 1:
-            if self.current_time_delta_end + 1  != self.total_frame:
+            self.log("HO forward")
+            if self.current_time_delta_end + 1  != self.total_frames:
+                # self.log("HHHHHHHH")
                 self.current_time_delta_key = frame_number
                 self.current_time_delta_end = (frame_number + TIME_DELTA_SIZE) - 1
 
@@ -247,15 +252,15 @@ class Time_deltas_handler:
                 self.fetch_next_data(self.current_time_delta_end+TIME_DELTA_SIZE)
 
         elif frame_number == self.current_time_delta_key and self.direction == 0:
-            if self.current_time_delta != 0:
+            if self.current_time_delta_key != 0:
+                self.log("HO Backward")
                 self.current_time_delta_key = self.current_time_delta_key - TIME_DELTA_SIZE
                 self.current_time_delta_end = frame_number
 
                 self.update_cache(self.current_time_delta_key, "back")
                 self.fetch_next_data(self.current_time_delta-TIME_DELTA_SIZE)
 
-        else:
-            self.update_vlayer_content()
+        self.update_vlayer_features()
         
    
 
@@ -271,7 +276,7 @@ class Time_deltas_handler:
 
             frame_index = frame_number- time_delta_key
 
-            current_time_stamp_column = self.buffer[self.timestamps_strings[time_delta_key]][:, frame_index]
+            current_time_stamp_column = self.time_deltas_matrices[time_delta_key][:, frame_index]
 
             datetime_objs = {i: datetime_obj for i in range(current_time_stamp_column.shape[0])}
             attribute_changes = {fid: {0: datetime_objs[fid]} for fid in datetime_objs}
@@ -289,7 +294,6 @@ class Time_deltas_handler:
             iface.vectorLayerTools().stopEditing(self.qviz.vlayer)
 
         except Exception as e:
-            self.log(str(e))
             self.log(f"Error updating the features for time_delta : {self.current_time_delta_key} and frame number : {self.previous_frame}")
 
 
@@ -341,7 +345,8 @@ class QgisThread(QgsTask):
             p_start = self.timestamps[self.begin_frame]
             p_end = self.timestamps[self.end_frame]
             rows = self.db.get_subset_of_tpoints(p_start, p_end, x_min, y_min, x_max, y_max)    
-
+            
+            self.log(f"len of rows : {len(rows)}")
             # features = self.db.get_subset_of_tpoints(self.ids_list, self.timestamps[self.pstart], self.timestamps[self.pend], self.xmin, self.ymin, self.xmax, self.ymax)
     
             
@@ -349,11 +354,13 @@ class QgisThread(QgsTask):
             matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
             #batch_coords = np.full((len(self.ids_list), (FRAMES_PER_TIME_DELTA) ), empty_point_wkt, dtype=object)
 
-        
-
+            time_ranges = self.timestamps
+            self.log(f"time ranges beg and end :  {time_ranges[0]} - {time_ranges[-1]} for {self.begin_frame} - {self.end_frame}")
+            count = 0
             for i in range(len(rows)):
                 try:
                     traj = rows[i][0]
+                    self.log(f"{rows[i][0].num_instants()}")
                     traj = traj.temporal_precision(GRANULARITY.value["timedelta"]) 
                     num_instants = traj.num_instants()
                     if num_instants == 0:
@@ -362,23 +369,28 @@ class QgisThread(QgsTask):
                         single_timestamp = traj.timestamps()[0].replace(tzinfo=None)
                         index = time_ranges.index(single_timestamp)
                         matrix[i][index] = traj.values()[0].wkt
+                        count += 1
                     elif num_instants >= 2:
                         traj_resampled = traj.temporal_sample(start=time_ranges[0],duration= GRANULARITY.value["timedelta"])
-
+                        self.log(f"resampling is ok ")
+                        self.log(f"start timestamp : {traj_resampled.start_timestamp().replace(tzinfo=None)}, end timestamp : {traj_resampled.end_timestamp().replace(tzinfo=None)}")
+                        self.log(f"indexes are ^ ")
                         start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) )
                         end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) )
-
+                        self.log(f"indexes is ok ")
                         trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
-                        
+                        self.log(f" creating np array ")
+                        self.log(f"shape of values arr : {trajectory_array.shape}, range : {end_index - start_index}")
                         matrix[i, start_index:end_index+1] = trajectory_array
+                        count += 1
                 except:
                     continue
-
+            self.log(f"count : {count}")
             del rows
             # gc.collect()
-     
+            self.log(f"{matrix.shape}")
             self.result_params = {
-                'delta_key': self.begin_frame,
+                'key': self.begin_frame,
                 'matrix' : matrix
             }
         except ValueError as e:
@@ -427,13 +439,10 @@ class Database_connector:
             contained in the STBOX defined by the xmin, ymin, xmax, ymax.
         """
         try:
-
-            pstart = "2023-06-01 00:00:00+00"
-            pend = "2023-06-01 23:59:59+00"
-
+           
             mmsi_list2 = [mmsi[0] for mmsi in self.ids_list]
             ids_str = ', '.join(map(str, mmsi_list2))
-            
+          
             query = f"""
                     SELECT 
                         atStbox(
@@ -450,11 +459,13 @@ class Database_connector:
                     FROM public.{self.table_name} as a 
                     WHERE a.{self.id_column_name} in ({ids_str});
                     """
-            # self.log(query)
+            
             self.cursor.execute(query)
-            return cursor.fetchall()
+            rows = self.cursor.fetchall()
+            self.log(f"get_subset_of_tpoints : length of rows{ len(rows)}, first element : {rows[0]}")
+            return rows
         except Exception as e:
-            pass
+            self.log(e)
 
 
     def get_min_timestamp(self):
@@ -516,7 +527,6 @@ class QVIZ:
         # self.data =  Data_in_memory(self.xmin, self.ymin, self.xmax, self.ymax)
         # self.data.task_manager.taskAdded.connect(self.pause)
         # self.data.generate_qgs_features(self.vlayer)
-        # self.data.task_manager.allTasksFinished.connect(self.update_vlayer_content)
         # self.current_time_delta = 0
         self.last_frame = 0
         # self.total_frame = self.data.total_frames
@@ -526,7 +536,7 @@ class QVIZ:
 
         self.fps_record = []
         # self.feature_number_record = []
-        # self.temporalController.updateTemporalRange.connect(self.on_new_frame)
+        self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         self.canvas.extentsChanged.connect(self.pause)
         # self.data.update_temporal_controller_extent(self.temporalController)
     
@@ -546,17 +556,6 @@ class QVIZ:
     def get_canvas_extent(self):
         return self.canvas.extent()
     
-    # def play(self):
-    #     """
-    #     TODO : self.direction has to be replaced by the animation state of the Temporal Controller
-    #     Plays the temporal controller animation.
-    #     """
-    #     self.update_vlayer_content()
-    #     if self.direction == "forward":
-    #         self.temporalController.playForward()
-    #     else:
-    #         self.temporalController.playBackward()
-            
 
     def pause(self):
         """
