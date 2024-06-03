@@ -108,9 +108,7 @@ class Time_deltas_handler:
         self.timestamps = [start_date + i * GRANULARITY.value["timedelta"] for i in range(self.total_frames)]
         self.timestamps = [dt.replace(tzinfo=None) for dt in self.timestamps]
         self.timestamps_strings = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in self.timestamps]
-        self.log(f"get_timestamps : total_frames : {self.total_frames}, start: {self.timestamps_strings[0]} - end : {self.timestamps_strings[-1]}")
-        
-
+  
 
     def initiate_temporal_controller_values(self):
         """
@@ -175,7 +173,6 @@ class Time_deltas_handler:
         """
         Store the time delta data fetched by the thread.
         """
-        self.log(f" parameters : {params}")
         self.time_deltas_matrices[params['key']] = params['matrix']
      
     
@@ -242,7 +239,7 @@ class Time_deltas_handler:
         self.previous_frame = frame_number
 
         if frame_number == self.current_time_delta_end and self.direction == 1:
-            self.log("HO forward")
+            self.log("FETCH NEXT BATCH forward")
             if self.current_time_delta_end + 1  != self.total_frames:
                 # self.log("HHHHHHHH")
                 self.current_time_delta_key = frame_number
@@ -252,8 +249,9 @@ class Time_deltas_handler:
                 self.fetch_next_data(self.current_time_delta_end+TIME_DELTA_SIZE)
 
         elif frame_number == self.current_time_delta_key and self.direction == 0:
+            self.log("FETCH NEXT BATCH Backward")
             if self.current_time_delta_key != 0:
-                self.log("HO Backward")
+                
                 self.current_time_delta_key = self.current_time_delta_key - TIME_DELTA_SIZE
                 self.current_time_delta_end = frame_number
 
@@ -341,26 +339,19 @@ class QgisThread(QgsTask):
             y_min = self.canvas_extent.yMinimum()
             x_max = self.canvas_extent.xMaximum()
             y_max = self.canvas_extent.yMaximum()
-            self.log(f"qgisThread - extent : {x_min}, {y_min}, {x_max}, {y_max}")
             p_start = self.timestamps[self.begin_frame]
             p_end = self.timestamps[self.end_frame]
             rows = self.db.get_subset_of_tpoints(p_start, p_end, x_min, y_min, x_max, y_max)    
-            
-            self.log(f"len of rows : {len(rows)}")
-            # features = self.db.get_subset_of_tpoints(self.ids_list, self.timestamps[self.pstart], self.timestamps[self.pend], self.xmin, self.ymin, self.xmax, self.ymax)
-    
+      
             
             empty_point_wkt = Point().wkt  # "POINT EMPTY"
             matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
-            #batch_coords = np.full((len(self.ids_list), (FRAMES_PER_TIME_DELTA) ), empty_point_wkt, dtype=object)
-
+   
             time_ranges = self.timestamps
-            self.log(f"time ranges beg and end :  {time_ranges[0]} - {time_ranges[-1]} for {self.begin_frame} - {self.end_frame}")
-            count = 0
+            now = time.time()
             for i in range(len(rows)):
                 try:
                     traj = rows[i][0]
-                    self.log(f"{rows[i][0].num_instants()}")
                     traj = traj.temporal_precision(GRANULARITY.value["timedelta"]) 
                     num_instants = traj.num_instants()
                     if num_instants == 0:
@@ -372,23 +363,19 @@ class QgisThread(QgsTask):
                         count += 1
                     elif num_instants >= 2:
                         traj_resampled = traj.temporal_sample(start=time_ranges[0],duration= GRANULARITY.value["timedelta"])
-                        self.log(f"resampling is ok ")
-                        self.log(f"start timestamp : {traj_resampled.start_timestamp().replace(tzinfo=None)}, end timestamp : {traj_resampled.end_timestamp().replace(tzinfo=None)}")
-                        self.log(f"indexes are ^ ")
-                        start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) )
-                        end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) )
-                        self.log(f"indexes is ok ")
+                     
+                        start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - TIME_DELTA_SIZE
+                        end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - TIME_DELTA_SIZE
+                   
                         trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
-                        self.log(f" creating np array ")
-                        self.log(f"shape of values arr : {trajectory_array.shape}, range : {end_index - start_index}")
                         matrix[i, start_index:end_index+1] = trajectory_array
                         count += 1
                 except:
                     continue
-            self.log(f"count : {count}")
+            self.log(f"time to fill matrix :: { time.time() - now}")
             del rows
             # gc.collect()
-            self.log(f"{matrix.shape}")
+    
             self.result_params = {
                 'key': self.begin_frame,
                 'matrix' : matrix
@@ -462,7 +449,6 @@ class Database_connector:
             
             self.cursor.execute(query)
             rows = self.cursor.fetchall()
-            self.log(f"get_subset_of_tpoints : length of rows{ len(rows)}, first element : {rows[0]}")
             return rows
         except Exception as e:
             self.log(e)
