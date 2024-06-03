@@ -37,7 +37,7 @@ TIME_DELTA_DEQUEUE_SIZE = 3 # Length of the dequeue to keep the keys to keep in 
 
 
 PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 48 # Number of frames associated to one Time delta
+TIME_DELTA_SIZE = 240 # Number of frames associated to one Time delta
 GRANULARITY = Time_granularity.MINUTE
 SRID = 4326
 
@@ -133,18 +133,19 @@ class Time_deltas_handler:
         """
         Only have a maximum of TIME_DELTA_DEQUEUE_SIZE time deltas in memory at all times.
         """
-        key = self.timestamps_strings[time_delta_key]
+        pass
+        # key = self.timestamps_strings[time_delta_key]
 
-        if key not in self.time_deltas_to_keep:
-            if direction == "forward":
-                self.time_deltas_to_keep.append(self.timestamps_strings[time_delta_key])
-            elif direction == "back":
-                self.time_deltas_to_keep.appendleft(self.timestamps_strings[time_delta_key])
+        # if key not in self.time_deltas_to_keep:
+        #     if direction == "forward":
+        #         self.time_deltas_to_keep.append(self.timestamps_strings[time_delta_key])
+        #     elif direction == "back":
+        #         self.time_deltas_to_keep.appendleft(self.timestamps_strings[time_delta_key])
             
-            # Remove all data associated to keys no longer in time_deltas_to_keep
-            for key in list(self.time_deltas_matrices.keys()):
-                if key not in self.time_deltas_to_keep:
-                    del self.time_deltas_matrices[key]
+        #     # Remove all data associated to keys no longer in time_deltas_to_keep
+        #     for key in list(self.time_deltas_matrices.keys()):
+        #         if key not in self.time_deltas_to_keep:
+        #             del self.time_deltas_matrices[key]
                     # gc.collect() #TODO measure time impact
 
     
@@ -162,7 +163,7 @@ class Time_deltas_handler:
         end_frame = (time_delta_key + TIME_DELTA_SIZE) -1
 
         if end_frame  <= (len(self.timestamps)) and beg_frame >= 0: #Either bound has to be valid 
-            self.qviz.pause()
+            # self.qviz.pause()
             task = QgisThread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
                                      self.db, self.qviz.get_canvas_extent(), self.timestamps, self.on_thread_completed, self.raise_error)
 
@@ -242,21 +243,21 @@ class Time_deltas_handler:
             self.log("FETCH NEXT BATCH forward")
             if self.current_time_delta_end + 1  != self.total_frames:
                 # self.log("HHHHHHHH")
-                self.current_time_delta_key = frame_number
-                self.current_time_delta_end = (frame_number + TIME_DELTA_SIZE) - 1
+                self.current_time_delta_key = frame_number+1
+                self.current_time_delta_end = (self.current_time_delta_key + TIME_DELTA_SIZE) - 1
 
                 self.update_cache(self.current_time_delta_key, "forward")
-                self.fetch_next_data(self.current_time_delta_end+TIME_DELTA_SIZE)
+                self.fetch_next_data(self.current_time_delta_key+TIME_DELTA_SIZE)
 
         elif frame_number == self.current_time_delta_key and self.direction == 0:
             self.log("FETCH NEXT BATCH Backward")
             if self.current_time_delta_key != 0:
                 
                 self.current_time_delta_key = self.current_time_delta_key - TIME_DELTA_SIZE
-                self.current_time_delta_end = frame_number
+                self.current_time_delta_end = frame_number-1
 
                 self.update_cache(self.current_time_delta_key, "back")
-                self.fetch_next_data(self.current_time_delta-TIME_DELTA_SIZE)
+                self.fetch_next_data(self.current_time_delta_key-TIME_DELTA_SIZE)
 
         self.update_vlayer_features()
         
@@ -364,8 +365,8 @@ class QgisThread(QgsTask):
                     elif num_instants >= 2:
                         traj_resampled = traj.temporal_sample(start=time_ranges[0],duration= GRANULARITY.value["timedelta"])
                      
-                        start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - TIME_DELTA_SIZE
-                        end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - TIME_DELTA_SIZE
+                        start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - self.begin_frame
+                        end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - self.begin_frame
                    
                         trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
                         matrix[i, start_index:end_index+1] = trajectory_array
