@@ -40,7 +40,7 @@ PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percent
 TIME_DELTA_SIZE = 48 # Number of frames associated to one Time delta
 GRANULARITY = Time_granularity.MINUTE
 SRID = 4326
-FPS = 30
+FPS = 60
 
 
 class Time_deltas_handler:
@@ -69,7 +69,7 @@ class Time_deltas_handler:
         self.current_time_delta_end = TIME_DELTA_SIZE - 1
         self.previous_frame = 0
         self.direction = 1 # 1 : forward, 0 : backward
-
+        self.changed_key = False
         # Initiate request for first batch
         time_delta_key = 0
         beg_frame = time_delta_key
@@ -447,7 +447,7 @@ class Database_connector:
                                 ST_MakeEnvelope(
                                     {xmin}, {ymin}, -- xmin, ymin
                                     {xmax}, {ymax}, -- xmax, ymax
-                                    {SRID} -- SRID
+                                    4326 -- SRID
                                 ),
                                 tstzspan('[{pstart}, {pend}]')
                             )
@@ -511,7 +511,7 @@ class QVIZ:
         self.canvas = iface.mapCanvas()
         self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem(f"EPSG:{SRID}"))
         self.temporalController = self.canvas.temporalController()
-        
+        self.canvas_extent = self.canvas.extent()
 
         self.handler = Time_deltas_handler(self)
 
@@ -544,7 +544,7 @@ class QVIZ:
             self.temporalController.setCurrentFrameNumber(frame_number)
 
     def get_canvas_extent(self):
-        return self.canvas.extent()
+        return self.canvas.extent
     
 
     def pause(self):

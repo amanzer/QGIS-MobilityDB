@@ -68,7 +68,8 @@ class Time_deltas_handler:
         self.current_time_delta_end = TIME_DELTA_SIZE - 1
         self.previous_frame = 0
         self.direction = 1 # 1 : forward, 0 : backward
-
+        self.changed_key = False
+        
         # Initiate request for first batch
         time_delta_key = 0
         beg_frame = time_delta_key
@@ -502,7 +503,7 @@ class QVIZ:
         self.canvas = iface.mapCanvas()
         self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem(f"EPSG:{SRID}"))
         self.temporalController = self.canvas.temporalController()
-        
+        self.canvas_extent = self.canvas.extent()
 
         self.handler = Time_deltas_handler(self)
 
@@ -531,7 +532,7 @@ class QVIZ:
             self.temporalController.setFramesPerSecond(frame_rate)
 
     def get_canvas_extent(self):
-        return self.canvas.extent()
+        return self.canvas.extent
     
 
     def pause(self):
