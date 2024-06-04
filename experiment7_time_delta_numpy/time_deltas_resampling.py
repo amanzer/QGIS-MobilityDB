@@ -36,8 +36,8 @@ FPS_DEQUEUE_SIZE = 5 # Length of the dequeue to calculate the average FPS
 TIME_DELTA_DEQUEUE_SIZE = 3 # Length of the dequeue to keep the keys to keep in the buffer
 
 
-PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 240 # Number of frames associated to one Time delta
+PERCENTAGE_OF_OBJECTS = 1 # To not overload the memory, we only take a percentage of the ships in the database
+TIME_DELTA_SIZE = 48 # Number of frames associated to one Time delta
 GRANULARITY = Time_granularity.MINUTE
 SRID = 4326
 
@@ -156,7 +156,8 @@ class Time_deltas_handler:
         """
         if self.task_manager.countActiveTasks() != 0: # Only allow one request at a time
             return None
-        
+        if  time_delta_key in  self.time_deltas_matrices.keys():
+            return None 
         # delta_key = self.timestamps_strings[time_delta_key]
 
         beg_frame = time_delta_key
@@ -228,8 +229,8 @@ class Time_deltas_handler:
         - t delta key 
         """
 
-        if self.previous_frame - frame_number < 0:
-            self.direction = 1
+        if self.previous_frame - frame_number <= 0:
+            self.direction = 1 # Forward
             if frame_number >= self.total_frames: # Reached the end of the animation, pause
                 self.qviz.pause()
         else:
@@ -240,26 +241,28 @@ class Time_deltas_handler:
         self.previous_frame = frame_number
 
         if frame_number == self.current_time_delta_end and self.direction == 1:
-            self.log("FETCH NEXT BATCH forward")
+            self.log(f"                                          FETCH NEXT BATCH  - forward - delta before : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
             if self.current_time_delta_end + 1  != self.total_frames:
-                # self.log("HHHHHHHH")
+                self.update_vlayer_features()
                 self.current_time_delta_key = frame_number+1
                 self.current_time_delta_end = (self.current_time_delta_key + TIME_DELTA_SIZE) - 1
-
+                self.log(f"                                          FETCH NEXT BATCH  - forward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
                 self.update_cache(self.current_time_delta_key, "forward")
                 self.fetch_next_data(self.current_time_delta_key+TIME_DELTA_SIZE)
 
         elif frame_number == self.current_time_delta_key and self.direction == 0:
-            self.log("FETCH NEXT BATCH Backward")
+            self.log(f"                                          FETCH NEXT BATCH  - backward - delta before : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
+            
             if self.current_time_delta_key != 0:
-                
+                self.update_vlayer_features()    
                 self.current_time_delta_key = self.current_time_delta_key - TIME_DELTA_SIZE
                 self.current_time_delta_end = frame_number-1
-
+                self.log(f"                                          FETCH NEXT BATCH  - backward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
+                
                 self.update_cache(self.current_time_delta_key, "back")
                 self.fetch_next_data(self.current_time_delta_key-TIME_DELTA_SIZE)
-
-        self.update_vlayer_features()
+        else:
+            self.update_vlayer_features()
         
    
 
@@ -359,7 +362,7 @@ class QgisThread(QgsTask):
                         continue
                     elif num_instants == 1:
                         single_timestamp = traj.timestamps()[0].replace(tzinfo=None)
-                        index = time_ranges.index(single_timestamp)
+                        index = time_ranges.index(single_timestamp) - self.begin_frame
                         matrix[i][index] = traj.values()[0].wkt
                         count += 1
                     elif num_instants >= 2:
@@ -367,7 +370,7 @@ class QgisThread(QgsTask):
                      
                         start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - self.begin_frame
                         end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - self.begin_frame
-                   
+             
                         trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
                         matrix[i, start_index:end_index+1] = trajectory_array
                         count += 1
@@ -439,7 +442,7 @@ class Database_connector:
                                 ST_MakeEnvelope(
                                     {xmin}, {ymin}, -- xmin, ymin
                                     {xmax}, {ymax}, -- xmax, ymax
-                                    {SRID} -- SRID
+                                    0 -- SRID
                                 ),
                                 tstzspan('[{pstart}, {pend}]')
                             )
@@ -447,7 +450,6 @@ class Database_connector:
                     FROM public.{self.table_name} as a 
                     WHERE a.{self.id_column_name} in ({ids_str});
                     """
-            
             self.cursor.execute(query)
             rows = self.cursor.fetchall()
             return rows
@@ -571,7 +573,7 @@ class QVIZ:
         fps = min(optimal_fps, 30)
 
         self.temporalController.setFramesPerSecond(fps)
-        self.log(f"FPS : {fps} - Calculated FPS : {optimal_fps}")
+        self.log(f"{fps} : FPS {optimal_fps}")
         self.fps_record.append(optimal_fps)
 
     
