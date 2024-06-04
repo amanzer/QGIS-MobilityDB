@@ -569,7 +569,6 @@ class QVIZ:
         """
         # Calculating the optimal FPS based on the new frame time
         optimal_fps = 1 / new_frame_time
-        if optimal_fps < self.fps 
         # Ensure FPS does not exceed 60
         fps = min(optimal_fps, FPS)
 
