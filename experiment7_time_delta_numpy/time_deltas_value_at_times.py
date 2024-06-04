@@ -42,7 +42,6 @@ GRANULARITY = Time_granularity.MINUTE
 SRID = 4326
 FPS = 30
 
-
 class Time_deltas_handler:
     """
     Logic to handle the time deltas during the animation AND the data stored in memory.
@@ -168,6 +167,7 @@ class Time_deltas_handler:
             # self.qviz.pause()
             task = QgisThread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
                                      self.db, self.qviz.get_canvas_extent(), self.timestamps, self.on_thread_completed, self.raise_error)
+
             self.qviz.pause()
             self.task_manager.addTask(task)        
 
@@ -354,29 +354,19 @@ class QgisThread(QgsTask):
    
             time_ranges = self.timestamps
             now = time.time()
+            
             for i in range(len(rows)):
-                try:
-                    traj = rows[i][0]
-                    traj = traj.temporal_precision(GRANULARITY.value["timedelta"]) 
-                    num_instants = traj.num_instants()
-                    if num_instants == 0:
+                for j in range(TIME_DELTA_SIZE):
+                    try:
+                        traj = rows[i][0]
+                        try:
+                            coords = traj.value_at_timestamp(time_ranges[j + self.begin_frame])
+                            matrix[i][j] = coords.wkt
+                        except:
+                            continue
+                    except:
                         continue
-                    elif num_instants == 1:
-                        single_timestamp = traj.timestamps()[0].replace(tzinfo=None)
-                        index = time_ranges.index(single_timestamp) - self.begin_frame
-                        matrix[i][index] = traj.values()[0].wkt
-                        count += 1
-                    elif num_instants >= 2:
-                        traj_resampled = traj.temporal_sample(start=time_ranges[0],duration= GRANULARITY.value["timedelta"])
-                     
-                        start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - self.begin_frame
-                        end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - self.begin_frame
-             
-                        trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
-                        matrix[i, start_index:end_index+1] = trajectory_array
-                        count += 1
-                except:
-                    continue
+              
             self.log(f"time to fill matrix :: { time.time() - now}")
             del rows
             # gc.collect()
@@ -569,7 +559,7 @@ class QVIZ:
         """
         # Calculating the optimal FPS based on the new frame time
         optimal_fps = 1 / new_frame_time
-        if optimal_fps < self.fps 
+        
         # Ensure FPS does not exceed 60
         fps = min(optimal_fps, FPS)
 
