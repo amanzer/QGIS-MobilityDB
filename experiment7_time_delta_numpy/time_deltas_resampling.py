@@ -158,7 +158,7 @@ class Time_deltas_handler:
 
         beg_frame = time_delta_key
         end_frame = (time_delta_key + TIME_DELTA_SIZE) -1
-
+        
         if end_frame  <= (len(self.timestamps)) and beg_frame >= 0: #Either bound has to be valid 
             # self.qviz.pause()
             task = QgisThread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
@@ -316,7 +316,7 @@ class QgisThread(QgsTask):
     
     This allows to keep the UI responsive while the data is being fetched.
     """
-    def __init__(self, description,project_title, beg_frame, end_frame, db, canvas_extent, timestamps, finished_fnc, failed_fnc):
+    def __init__(self, description,project_title, beg_frame, end_frame, db, extent, timestamps, finished_fnc, failed_fnc):
         super(QgisThread, self).__init__(description, QgsTask.CanCancel)
 
         self.project_title = project_title
@@ -324,7 +324,7 @@ class QgisThread(QgsTask):
         self.begin_frame = beg_frame
         self.end_frame = end_frame
         self.db = db
-        self.canvas_extent = canvas_extent
+        self.extent = extent
         self.timestamps = timestamps
         self.finished_fnc = finished_fnc
         self.failed_fnc = failed_fnc
@@ -344,10 +344,7 @@ class QgisThread(QgsTask):
         for the given time delta.
         """
         try:
-            x_min = self.canvas_extent.xMinimum()
-            y_min = self.canvas_extent.yMinimum()
-            x_max = self.canvas_extent.xMaximum()
-            y_max = self.canvas_extent.yMaximum()
+            x_min,y_min, x_max, y_max = self.extent
             p_start = self.timestamps[self.begin_frame]
             p_end = self.timestamps[self.end_frame]
             rows = self.db.get_subset_of_tpoints(p_start, p_end, x_min, y_min, x_max, y_max)    
@@ -511,7 +508,7 @@ class QVIZ:
         self.canvas = iface.mapCanvas()
         self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem(f"EPSG:{SRID}"))
         self.temporalController = self.canvas.temporalController()
-        self.canvas_extent = self.canvas.extent()
+        self.extent = self.canvas.extent().toRectF().getCoords()
 
         self.handler = Time_deltas_handler(self)
 
@@ -544,7 +541,7 @@ class QVIZ:
             self.temporalController.setCurrentFrameNumber(frame_number)
 
     def get_canvas_extent(self):
-        return self.canvas.extent
+        return self.extent
     
 
     def pause(self):
@@ -612,7 +609,14 @@ class QVIZ:
 
     def log(self, msg):
         QgsMessageLog.logMessage(msg, 'qViz', level=Qgis.Info)
- 
+    
+    def memory_usage(self, obj):
+        """
+        Returns the memory usage of the object in paramter, in mega bytes.
+        """
+        size_in_bytes = asizeof.asizeof(obj)
+        size_in_megabytes = size_in_bytes / (1024 * 1024)
+        self.log(f"Total size: {size_in_megabytes:.6f} MB")
 
 
 
