@@ -33,7 +33,7 @@ class Time_granularity(Enum):
 
 
 FPS_DEQUEUE_SIZE = 5 # Length of the dequeue to calculate the average FPS
-TIME_DELTA_DEQUEUE_SIZE = 3 # Length of the dequeue to keep the keys to keep in the buffer
+TIME_DELTA_DEQUEUE_SIZE =  10 # Length of the dequeue to keep the keys to keep in the buffer
 
 
 PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
@@ -259,7 +259,6 @@ class Time_deltas_handler:
                     
                     self.update_cache(self.current_time_delta_key)
                     self.fetch_next_data(self.current_time_delta_key-TIME_DELTA_SIZE)
-                    self.qviz.set_temporal_controller_frame_number(self.current_time_delta_end)
                     self.changed_key = True
         else:
             if self.changed_key:
@@ -437,8 +436,8 @@ class Database_connector:
         """
         try:
            
-            mmsi_list2 = [mmsi[0] for mmsi in self.ids_list]
-            ids_str = ', '.join(map(str, mmsi_list2))
+            ids_list = [ f"'{id[0]}'"  for id in self.ids_list]
+            ids_str = ', '.join(map(str, ids_list))
           
             query = f"""
                     SELECT 
@@ -448,7 +447,7 @@ class Database_connector:
                                 ST_MakeEnvelope(
                                     {xmin}, {ymin}, -- xmin, ymin
                                     {xmax}, {ymax}, -- xmax, ymax
-                                    0 -- SRID
+                                    {SRID} -- SRID
                                 ),
                                 tstzspan('[{pstart}, {pend}]')
                             )
@@ -518,22 +517,14 @@ class QVIZ:
 
 
         self.handler.generate_qgs_features()
-
-        # self.data =  Data_in_memory(self.xmin, self.ymin, self.xmax, self.ymax)
-        # self.data.task_manager.taskAdded.connect(self.pause)
-        # self.data.generate_qgs_features(self.vlayer)
-        # self.current_time_delta = 0
-        self.last_frame = 0
-        # self.total_frame = self.data.total_frames
+    
         # self.dq_FPS = deque(maxlen=LEN_DEQUEUE_FPS)
         # for i in range(LEN_DEQUEUE_FPS):
         #     self.dq_FPS.append(0.033)
 
         self.fps_record = []
-        # self.feature_number_record = []
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         self.canvas.extentsChanged.connect(self.pause)
-        # self.data.update_temporal_controller_extent(self.temporalController)
     
 
     def set_temporal_controller_extent(self, time_range):

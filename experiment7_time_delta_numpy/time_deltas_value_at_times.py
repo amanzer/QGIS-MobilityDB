@@ -33,10 +33,10 @@ class Time_granularity(Enum):
 
 
 FPS_DEQUEUE_SIZE = 5 # Length of the dequeue to calculate the average FPS
-TIME_DELTA_DEQUEUE_SIZE = 3 # Length of the dequeue to keep the keys to keep in the buffer
+TIME_DELTA_DEQUEUE_SIZE = 10 # Length of the dequeue to keep the keys to keep in the buffer
 
 
-PERCENTAGE_OF_OBJECTS = 1 # To not overload the memory, we only take a percentage of the ships in the database
+PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
 TIME_DELTA_SIZE = 240 # Number of frames associated to one Time delta
 GRANULARITY = Time_granularity.MINUTE
 SRID = 4326
@@ -129,23 +129,19 @@ class Time_deltas_handler:
 
 
 
-    def update_cache(self, time_delta_key, direction):
+    def update_cache(self, time_delta_key):
         """
         Only have a maximum of TIME_DELTA_DEQUEUE_SIZE time deltas in memory at all times.
         """
         pass
-        # key = self.timestamps_strings[time_delta_key]
-
-        # if key not in self.time_deltas_to_keep:
-        #     if direction == "forward":
-        #         self.time_deltas_to_keep.append(self.timestamps_strings[time_delta_key])
-        #     elif direction == "back":
-        #         self.time_deltas_to_keep.appendleft(self.timestamps_strings[time_delta_key])
+        
+        if time_delta_key not in self.time_deltas_to_keep:
+            self.time_deltas_to_keep.append(time_delta_key)
             
-        #     # Remove all data associated to keys no longer in time_deltas_to_keep
-        #     for key in list(self.time_deltas_matrices.keys()):
-        #         if key not in self.time_deltas_to_keep:
-        #             del self.time_deltas_matrices[key]
+            # Remove all data associated to keys no longer in time_deltas_to_keep
+            for key in list(self.time_deltas_matrices.keys()):
+                if key not in self.time_deltas_to_keep:
+                    del self.time_deltas_matrices[key]
                     # gc.collect() #TODO measure time impact
 
     
@@ -241,30 +237,39 @@ class Time_deltas_handler:
             
         self.previous_frame = frame_number
 
-        if frame_number == self.current_time_delta_end and self.direction == 1:
-            self.log(f"                                          FETCH NEXT BATCH  - forward - delta before : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
-            if self.current_time_delta_end + 1  != self.total_frames:
-                self.update_vlayer_features()
-                self.current_time_delta_key = frame_number+1
-                self.current_time_delta_end = (self.current_time_delta_key + TIME_DELTA_SIZE) - 1
-                self.log(f"                                          FETCH NEXT BATCH  - forward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
-                self.update_cache(self.current_time_delta_key, "forward")
-                self.fetch_next_data(self.current_time_delta_key+TIME_DELTA_SIZE)
-
-        elif frame_number == self.current_time_delta_key and self.direction == 0:
-            self.log(f"                                          FETCH NEXT BATCH  - backward - delta before : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
+        if frame_number % TIME_DELTA_SIZE == 0:
+            if self.direction == 1:
+                self.log(f"                                          FETCH NEXT BATCH  - forward - delta before : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
+                if self.current_time_delta_end + 1  != self.total_frames:
+                    self.qviz.pause()
+                    self.current_time_delta_key = frame_number
+                    self.current_time_delta_end = (self.current_time_delta_key + TIME_DELTA_SIZE) - 1
+                    self.log(f"                                          FETCH NEXT BATCH  - forward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
+                    self.update_cache(self.current_time_delta_key)
+                    self.fetch_next_data(self.current_time_delta_key+TIME_DELTA_SIZE)
+                    self.update_vlayer_features()
+                    self.changed_key = True
+            else:
+                self.log(f"                                          FETCH NEXT BATCH  - backward - delta before : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
             
-            if self.current_time_delta_key != 0:
-                self.update_vlayer_features()    
-                self.current_time_delta_key = self.current_time_delta_key - TIME_DELTA_SIZE
-                self.current_time_delta_end = frame_number-1
-                self.log(f"                                          FETCH NEXT BATCH  - backward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
-                
-                self.update_cache(self.current_time_delta_key, "back")
-                self.fetch_next_data(self.current_time_delta_key-TIME_DELTA_SIZE)
+                self.update_vlayer_features()  
+                if self.current_time_delta_key != 0:
+                    self.qviz.pause()
+                    self.current_time_delta_key = self.current_time_delta_key - TIME_DELTA_SIZE
+                    self.current_time_delta_end = frame_number-1
+                    self.log(f"                                          FETCH NEXT BATCH  - backward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
+                    
+                    self.update_cache(self.current_time_delta_key)
+                    self.fetch_next_data(self.current_time_delta_key-TIME_DELTA_SIZE)
+                    self.changed_key = True
         else:
+            if self.changed_key:
+                if frame_number < self.current_time_delta_key:
+                    self.current_time_delta_key = self.current_time_delta_key - TIME_DELTA_SIZE
+                    self.current_time_delta_end = frame_number
+                    self.changed_key = False
             self.update_vlayer_features()
-        
+            self.changed_key = False
    
 
     def update_vlayer_features(self):
@@ -422,8 +427,8 @@ class Database_connector:
         """
         try:
            
-            mmsi_list2 = [mmsi[0] for mmsi in self.ids_list]
-            ids_str = ', '.join(map(str, mmsi_list2))
+            ids_list = [ f"'{id[0]}'"  for id in self.ids_list]
+            ids_str = ', '.join(map(str, ids_list))
           
             query = f"""
                     SELECT 
@@ -433,7 +438,7 @@ class Database_connector:
                                 ST_MakeEnvelope(
                                     {xmin}, {ymin}, -- xmin, ymin
                                     {xmax}, {ymax}, -- xmax, ymax
-                                    0 -- SRID
+                                    {SRID} -- SRID
                                 ),
                                 tstzspan('[{pstart}, {pend}]')
                             )
@@ -503,22 +508,14 @@ class QVIZ:
 
 
         self.handler.generate_qgs_features()
-
-        # self.data =  Data_in_memory(self.xmin, self.ymin, self.xmax, self.ymax)
-        # self.data.task_manager.taskAdded.connect(self.pause)
-        # self.data.generate_qgs_features(self.vlayer)
-        # self.current_time_delta = 0
-        self.last_frame = 0
         # self.total_frame = self.data.total_frames
         # self.dq_FPS = deque(maxlen=LEN_DEQUEUE_FPS)
         # for i in range(LEN_DEQUEUE_FPS):
         #     self.dq_FPS.append(0.033)
 
         self.fps_record = []
-        # self.feature_number_record = []
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         self.canvas.extentsChanged.connect(self.pause)
-        # self.data.update_temporal_controller_extent(self.temporalController)
     
 
     def set_temporal_controller_extent(self, time_range):
