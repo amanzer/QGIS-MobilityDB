@@ -145,7 +145,6 @@ class qviz:
         self.update_features_times.append(time.time()-now)
         self.number_of_points_stored_in_layer.append(len(self.features_list))
 
-
     def removePoints(self):
         now = time.time()
         self.vlayer.startEditing()
