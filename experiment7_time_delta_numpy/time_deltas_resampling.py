@@ -366,7 +366,6 @@ class QgisThread(QgsTask):
                         single_timestamp = traj.timestamps()[0].replace(tzinfo=None)
                         index = time_ranges.index(single_timestamp) - self.begin_frame
                         matrix[i][index] = traj.values()[0].wkt
-                        count += 1
                     elif num_instants >= 2:
                         traj_resampled = traj.temporal_sample(start=time_ranges[0],duration= GRANULARITY.value["timedelta"])
                      
@@ -375,7 +374,6 @@ class QgisThread(QgsTask):
              
                         trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
                         matrix[i, start_index:end_index+1] = trajectory_array
-                        count += 1
                 except:
                     continue
             self.log(f"time to fill matrix :: { time.time() - now}")
