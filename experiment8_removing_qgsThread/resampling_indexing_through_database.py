@@ -443,7 +443,7 @@ class Database_connector:
             ids_str = ', '.join(map(str, ids_list))
           
             query = f"""
-                    
+                    -- Resampling trajectories to 1 minute intervals
                     WITH trajectories AS (
                         SELECT 
                             MMSI,
@@ -482,7 +482,7 @@ class Database_connector:
                     FROM 
                         resampled
                     ),
-
+                    -- The following is to get the frame index of the start and end timestamps
                     minute_intervals AS (
                         SELECT 
                             generate_series(
@@ -492,16 +492,14 @@ class Database_connector:
                             ) AS ts
                     ),
 
-                    -- Now, create a numbered list of these timestamps
                     timestamps_with_index AS (
                         SELECT 
                             ts,
-                            row_number() OVER (ORDER BY ts) - 1 AS idx  -- Subtract 1 if you want the index to start at 0
+                            row_number() OVER (ORDER BY ts) - 1 AS idx  
                         FROM 
                             minute_intervals
                     ),
                         
-                    -- Assuming `precise_trajectory` is already defined and contains start and end timestamps for trajectories
                     start_end_indices AS (
                         SELECT 
                             MIN(t.idx) AS start_index,
@@ -518,7 +516,6 @@ class Database_connector:
 
                     )
 
-                    -- Select the desired output
                     SELECT
                         start_index,
                         end_index,
