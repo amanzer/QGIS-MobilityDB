@@ -37,8 +37,8 @@ TIME_DELTA_DEQUEUE_SIZE =  10 # Length of the dequeue to keep the keys to keep i
 
 
 PERCENTAGE_OF_OBJECTS = 1 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 1000 # Number of frames associated to one Time delta
-GRANULARITY = Time_granularity.SECOND
+TIME_DELTA_SIZE = 240 # Number of frames associated to one Time delta
+GRANULARITY = Time_granularity.MINUTE
 SRID = 4326
 FPS = 20
 
@@ -192,10 +192,10 @@ class Time_deltas_handler:
         datetime_obj = QDateTime.fromString(self.timestamps_strings[0], "yyyy-MM-dd HH:mm:ss")
         vlayer_fields = self.qviz.vlayer.fields()
 
-        empty_point = Point() # "POINT EMPTY"
+        # empty_point = Point() # "POINT EMPTY"
         empty_point_wkt = Point().wkt # "POINT EMPTY"
         # create a numpy array of size len(ids_list) with empty_point_wkt
-        starting_points = np.full((1, len(self.db.ids_list)), empty_point, dtype=object)
+        starting_points = np.full((1, len(self.db.ids_list)), empty_point_wkt, dtype=object)
     
         qgis_fields_list = []
         
@@ -206,11 +206,9 @@ class Time_deltas_handler:
             # Create geometry from WKT string
             # check if wkt is empty point 
 
-            if wkt.item().is_empty:
-                geom = QgsGeometry.fromWkt(empty_point_wkt)
-            else:
-                x,y = wkt.item().x, wkt.item().y
-                geom = QgsGeometry.fromPointXY(QgsPointXY(x,y)) # Create geometry from valueAtTimestamp
+        
+            geom = QgsGeometry.fromWkt(empty_point_wkt)
+      
             # geom = QgsGeometry.fromWkt(wkt.item())
             feat.setGeometry(geom)  # Set its geometry
             qgis_fields_list.append(feat)
@@ -291,22 +289,19 @@ class Time_deltas_handler:
             key =  self.timestamps_strings[frame_number]
             datetime_obj = QDateTime.fromString(key, "yyyy-MM-dd HH:mm:ss")
 
-            frame_index = frame_number- time_delta_key
-
-            current_time_stamp_column = self.time_deltas_matrices[time_delta_key][:, frame_index]
-
-            datetime_objs = {i: datetime_obj for i in range(current_time_stamp_column.shape[0])}
+            current_delta = self.time_deltas_matrices[time_delta_key]
+            datetime_objs = {i: datetime_obj for i in range(len(current_delta))}
             attribute_changes = {fid: {0: datetime_objs[fid]} for fid in datetime_objs}
 
-
             new_geometries = {}  # Dictionary {feature_id: QgsGeometry}
-            for i in range(current_time_stamp_column.shape[0]): #TODO : compare vs Nditer
-                if current_time_stamp_column[i].is_empty:
-                    new_geometries[i] = QgsGeometry.fromWkt("POINT EMPTY")
+
+            # loop over current_delta dict, enumerate
+            empty_point_wkt = Point().wkt # "POINT EMPTY"
+            for fid, tpoint in current_delta.items():
+                if tpoint is None:
+                    new_geometries[fid] = QgsGeometry.fromWkt(empty_point_wkt)
                 else:
-                    x,y = current_time_stamp_column[i].x, current_time_stamp_column[i].y
-                    
-                    new_geometries[i] = QgsGeometry.fromPointXY(QgsPointXY(x,y))    
+                    new_geometries[fid] = QgsGeometry.fromWkt(tpoint.valueAtTimestamp(frame_number))
 
             self.qviz.vlayer.startEditing()
             self.qviz.vlayer.dataProvider().changeAttributeValues(attribute_changes) # Updating attribute values for all features
@@ -322,6 +317,16 @@ class Time_deltas_handler:
     def log(self, msg):
         QgsMessageLog.logMessage(msg, 'qViz', level=Qgis.Info)
 
+
+class NewTpoint:
+    def __init__(self, tpoint):
+        self.tpoint = tpoint
+    
+    def valueAtTimestamp(self, frame):
+        try:
+            return self.tpoint.values()[frame].wkt
+        except Exception as e:
+            return Point().wkt # "POINT EMPTY"
 
 
 class QgisThread(QgsTask):
@@ -360,36 +365,29 @@ class QgisThread(QgsTask):
         """
         try:
             x_min,y_min, x_max, y_max = self.extent
-            p_start = self.timestamps[self.begin_frame] + timedelta(minutes=1)
+            p_start = self.timestamps[self.begin_frame]
             p_end = self.timestamps[self.end_frame]
             rows = self.db.get_subset_of_tpoints(p_start, p_end, x_min, y_min, x_max, y_max)    
       
-            self.log(f"Number of rows fetched : {len(rows)}")
+            
             empty_point = Point()  # "POINT EMPTY"
-            matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point, dtype=object)
+            tpoints = {}
    
             time_ranges = self.timestamps
             now = time.time()
             for i in range(len(rows)):
-                try:
-                    traj = rows[i][2]
+                if rows[i][0] is None:
+                    tpoints[i] = None
+                else:
+                    tpoints[i] = NewTpoint(rows[i][0])
 
-                    start_index = rows[i][0]
-                    end_index = rows[i][1]
-
-                    # trajectory_array = np.array([point.wkt for point in traj.values()])
-                    matrix[i, start_index:end_index+1] = traj.values()
-
-
-                except:
-                    continue
-            self.log(f"time to fill matrix :: { time.time() - now}")
+            self.log(f"time to create new Tpoints :: { time.time() - now}")
             del rows
             # gc.collect()
     
             self.result_params = {
                 'key': self.begin_frame,
-                'matrix' : matrix
+                'matrix' : tpoints
             }
         except ValueError as e:
             self.error_msg = str(e)
@@ -462,75 +460,25 @@ class Database_connector:
                         WHERE a.{self.id_column_name} in ({ids_str})),
                     processed_trajectory AS (
                         SELECT 
-                            tprecision(traj, INTERVAL '1 second', startTimestamp(traj)) AS precise_trajectory
+                            tprecision(traj, INTERVAL '1 minute', startTimestamp(traj)) AS precise_trajectory
                         FROM 
                             trajectories 
                     ),
                         
                     resampled AS 
                             (SELECT 
-                                tsample(precise_trajectory, INTERVAL '1 second', startTimestamp(precise_trajectory))  AS resampled_trajectory
+                                tsample(precise_trajectory, INTERVAL '1 minute', startTimestamp(precise_trajectory))  AS resampled_trajectory
                                 FROM 
                                 processed_trajectory
-                                ),
-                        
-
-                        final_values AS (
+                                )
                     SELECT
-                        startTimestamp(resampled_trajectory) as start_timestamp, endTimestamp(resampled_trajectory) as end_timestamp,
                         resampled_trajectory 
                     FROM 
                         resampled
-                    ),
-
-                    minute_intervals AS (
-                        SELECT 
-                            generate_series(
-                                timestamp '{pstart}', 
-                                timestamp '{pend}', 
-                                interval '1 second'
-                            ) AS ts
-                    ),
-
-                    -- Now, create a numbered list of these timestamps
-                    timestamps_with_index AS (
-                        SELECT 
-                            ts,
-                            row_number() OVER (ORDER BY ts) - 1 AS idx  -- Subtract 1 if you want the index to start at 0
-                        FROM 
-                            minute_intervals
-                    ),
-                        
-                    -- Assuming `precise_trajectory` is already defined and contains start and end timestamps for trajectories
-                    start_end_indices AS (
-                        SELECT 
-                            MIN(t.idx) AS start_index,
-                            MAX(g.idx) AS end_index,
-                            p.resampled_trajectory as traj
-                        FROM 
-                            final_values p
-                        JOIN 
-                            timestamps_with_index t ON t.ts = p.start_timestamp
-                        JOIN 
-                            timestamps_with_index g ON g.ts = p.end_timestamp
-                        GROUP BY
-                        p.resampled_trajectory
-
-                    )
-
-                    -- Select the desired output
-                    SELECT
-                        start_index,
-                        end_index,
-                        traj
-                        
-                        
-                    FROM
-                        start_end_indices;
-
+                    ;
 
                     """
-            # self.log(f"Query : {query}")
+            self.log(f"Query : {query}")
             self.cursor.execute(query)
             rows = self.cursor.fetchall()
             return rows
