@@ -38,8 +38,8 @@ FPS_DEQUEUE_SIZE = 5 # Length of the dequeue to calculate the average FPS
 TIME_DELTA_DEQUEUE_SIZE =  10 # Length of the dequeue to keep the keys to keep in the buffer
 
 
-PERCENTAGE_OF_OBJECTS = 1 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 48 # Number of frames associated to one Time delta
+PERCENTAGE_OF_OBJECTS = 0.2 # To not overload the memory, we only take a percentage of the ships in the database
+TIME_DELTA_SIZE = 500 # Number of frames associated to one Time delta
 GRANULARITY = Time_granularity.MINUTE
 SRID = 4326
 FPS = 30
@@ -67,7 +67,7 @@ class Time_deltas_handler:
 
 
         # Creating a clean folder for the matrix files
-        directory_path = f'/home/ali/matrices/'
+        directory_path = f"/home/ali/matrices/"
         shutil.rmtree(directory_path)
         os.makedirs(directory_path)
 
@@ -186,7 +186,7 @@ class Time_deltas_handler:
         """
         Store the time delta data fetched by the thread.
         """
-        filename = f'/home/ali/matrices/matrix_{params['key']}.npy'
+        filename = f"/home/ali/matrices/matrix_{params['key']}.npy"
 
         loaded_matrix = np.load(filename, allow_pickle=True)
 
@@ -378,7 +378,7 @@ class QgisThread(QgsTask):
             
 
             # Command to execute Program B
-            command = ['/usr/bin/python3', '/home/ali/QGIS-MobilityDB/experiment8_removing_qgsThread/matrix_file.py', *arguments]
+            command = ["/usr/bin/python3", "/home/ali/QGIS-MobilityDB/experiment8_removing_qgsThread/matrix_file.py", *arguments]
             result = subprocess.run(command, capture_output=True, text=True)
             self.log(result.stdout.strip())
             self.log("file created" )
