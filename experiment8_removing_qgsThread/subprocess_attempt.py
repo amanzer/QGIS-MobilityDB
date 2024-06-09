@@ -27,10 +27,10 @@ import shutil
 import os
 
 class Time_granularity(Enum):
-    MILLISECOND = {"timedelta" : timedelta(milliseconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Milliseconds}
-    SECOND = {"timedelta" : timedelta(seconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Seconds}
-    MINUTE = {"timedelta" : timedelta(minutes=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Minutes}
-    HOUR = {"timedelta" : timedelta(hours=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Hours}
+    MILLISECOND = {"timedelta" : timedelta(milliseconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Milliseconds, "name" : "millisecond"}
+    SECOND = {"timedelta" : timedelta(seconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Seconds, "name" : "second"}
+    MINUTE = {"timedelta" : timedelta(minutes=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Minutes, "name" : "minute"}
+    HOUR = {"timedelta" : timedelta(hours=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Hours, "name" : "hour"}
   
 
 
@@ -39,7 +39,7 @@ TIME_DELTA_DEQUEUE_SIZE =  10 # Length of the dequeue to keep the keys to keep i
 
 
 PERCENTAGE_OF_OBJECTS = 1 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 240 # Number of frames associated to one Time delta
+TIME_DELTA_SIZE = 48 # Number of frames associated to one Time delta
 GRANULARITY = Time_granularity.MINUTE
 SRID = 4326
 FPS = 30
@@ -375,12 +375,13 @@ class QgisThread(QgsTask):
             arguments = [self.begin_frame, self.end_frame, PERCENTAGE_OF_OBJECTS, x_min, y_min, x_max, y_max]
             arguments = [str(arg) for arg in arguments]
             arguments += [p_start, p_end]
-            arguments += self.timestamps
-
+            arguments += self.timestamps[0]
+            arguments += str(len(self.timestamps))
+            arguments += GRANULARITY.value["name"]
 
 
             # Command to execute Program B
-            command = ['/usr/bin/python3', '/home/ali/QGIS-MobilityDB/experiment7_time_delta_numpy/matrix_file.py', *arguments]
+            command = ['/usr/bin/python3', '/home/ali/QGIS-MobilityDB/experiment8_removing_qgsThread/matrix_file.py', *arguments]
             result = subprocess.run(command, capture_output=True, text=True)
             self.log(result.stdout.strip())
             self.log("file created" )

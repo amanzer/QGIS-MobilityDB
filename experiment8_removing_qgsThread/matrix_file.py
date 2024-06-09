@@ -8,7 +8,6 @@ The matrices are saved in the /home/ali/matrices/ folder.
 
 import numpy as np
 from shapely.geometry import Point
-import h5py
 from pymeos.db.psycopg import MobilityDB
 
 from pymeos import *
@@ -17,6 +16,7 @@ import sys
 from datetime import timedelta, datetime
 from pymeos import *
 import time
+
 
 now = time.time()
 
@@ -136,7 +136,16 @@ class Database_connector:
 
 
 file_name = f"/home/ali/matrices/matrix_{begin_frame}.npy"
-GRANULARITY = timedelta(minutes=1)
+
+
+  
+Time_granularities = {"MILLISECOND" : timedelta(milliseconds=1),
+                      "SECOND" : timedelta(seconds=1),
+                      "MINUTE" : timedelta(minutes=1),
+                      "HOUR" : timedelta(hours=1),
+                    
+                    }
+
 
 # check if file does't already exist
 
@@ -149,9 +158,17 @@ if not os.path.exists(file_name):
     x_max = float(args[5])
     y_max = float(args[6])
 
-    timestamps = args[7:]
-    # transform the timestamps to datetime objects
-    timestamps = [datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S') for timestamp in timestamps]
+    start_timestamps = args[7]
+    start_timestamps= datetime.strptime(start_timestamps, '%Y-%m-%d %H:%M:%S')
+    total_frames = int(args[8])
+    GRANULARITY = Time_granularities[args[9]]
+
+
+    timestamps = []
+    for i in range(total_frames):
+        timestamps.append(start_timestamps + i*GRANULARITY)
+
+
 
     p_start = timestamps[begin_frame]
     p_end = timestamps[end_frame]
