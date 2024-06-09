@@ -32,9 +32,7 @@ TIME_DELTA_SIZE = end_frame - begin_frame + 1
 PERCENTAGE_OF_OBJECTS = float(args[2])
 
 
-GRANULARITY = timedelta(minutes=1) # Time delta between two frames
 SRID = 4326
-FPS = 60
 
 
 
@@ -143,7 +141,6 @@ Time_granularities = {"MILLISECOND" : timedelta(milliseconds=1),
                       "SECOND" : timedelta(seconds=1),
                       "MINUTE" : timedelta(minutes=1),
                       "HOUR" : timedelta(hours=1),
-                    
                     }
 
 
@@ -158,15 +155,16 @@ if not os.path.exists(file_name):
     x_max = float(args[5])
     y_max = float(args[6])
 
-    start_timestamps = args[7]
-    start_timestamps= datetime.strptime(start_timestamps, '%Y-%m-%d %H:%M:%S')
+    start_date = args[7]
+    start_date = datetime.strptime(start_date, '%Y-%m-%d %H:%M:%S')
+
+
     total_frames = int(args[8])
     GRANULARITY = Time_granularities[args[9]]
 
-
     timestamps = []
-    for i in range(total_frames):
-        timestamps.append(start_timestamps + i*GRANULARITY)
+    for i in range(total_frames): 
+        timestamps.append(start_date + i*GRANULARITY)
 
 
 

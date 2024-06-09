@@ -27,10 +27,10 @@ import shutil
 import os
 
 class Time_granularity(Enum):
-    MILLISECOND = {"timedelta" : timedelta(milliseconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Milliseconds, "name" : "millisecond"}
-    SECOND = {"timedelta" : timedelta(seconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Seconds, "name" : "second"}
-    MINUTE = {"timedelta" : timedelta(minutes=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Minutes, "name" : "minute"}
-    HOUR = {"timedelta" : timedelta(hours=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Hours, "name" : "hour"}
+    MILLISECOND = {"timedelta" : timedelta(milliseconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Milliseconds, "name" : "MILLISECOND"}
+    SECOND = {"timedelta" : timedelta(seconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Seconds, "name" : "SECOND"}
+    MINUTE = {"timedelta" : timedelta(minutes=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Minutes, "name" : "MINUTE"}
+    HOUR = {"timedelta" : timedelta(hours=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Hours, "name" : "HOUR"}
   
 
 
@@ -98,7 +98,7 @@ class Time_deltas_handler:
 
         
         # Load the matrix from an HDF5 file
-        filename = f'/home/ali/matrices/matrix_{0}.npy'
+        filename = f"/home/ali/matrices/matrix_{0}.npy"
         loaded_matrix = np.load(filename, allow_pickle=True)
 
         self.time_deltas_matrices[0] = loaded_matrix
@@ -374,11 +374,8 @@ class QgisThread(QgsTask):
      
             arguments = [self.begin_frame, self.end_frame, PERCENTAGE_OF_OBJECTS, x_min, y_min, x_max, y_max]
             arguments = [str(arg) for arg in arguments]
-            arguments += [p_start, p_end]
-            arguments += self.timestamps[0]
-            arguments += str(len(self.timestamps))
-            arguments += GRANULARITY.value["name"]
-
+            arguments += [self.timestamps[0], str(len(self.timestamps)), GRANULARITY.value["name"]]
+            
 
             # Command to execute Program B
             command = ['/usr/bin/python3', '/home/ali/QGIS-MobilityDB/experiment8_removing_qgsThread/matrix_file.py', *arguments]
