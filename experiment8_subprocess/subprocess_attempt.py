@@ -1,12 +1,7 @@
 """
-
 TODOS :
 
-- debug the first time delta fetch => Not all objects are displayed
-- Comparing Update features vs Del/ADD
-     -Nditer vs for loop
-
-- Need to handle the files  
+- Need to handle the files   : delete file with the key 
 
 """
 
