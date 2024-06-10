@@ -155,8 +155,8 @@ class Database_connector:
         self.connection.close()
 
 
-MATRIX_DIRECTORY_PATH = args[10]
-file_name = f"{MATRIX_DIRECTORY_PATH}/matrix_{begin_frame}.npy"
+MATRIX_DIRECTORY_PATH = "/home/ali/matrices"
+file_name = f"/home/ali/matrices/matrix_{begin_frame}.npy"
 
 
   
@@ -245,5 +245,5 @@ if not os.path.exists(file_name):
 
 
 
-with open(f"{MATRIX_DIRECTORY_PATH}/logs.txt", "a") as file:
+with open(f"/home/ali/matrices/logs.txt", "a") as file:
     file.write(logs)

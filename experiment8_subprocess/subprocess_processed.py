@@ -42,8 +42,8 @@ GRANULARITY = Time_granularity.MINUTE
 SRID = 4326
 FPS = 30
 
-DIRECTORY_PATH = os.getcwd()
-MATRIX_DIRECTORY_PATH = f'{DIRECTORY_PATH}/matrices'
+DIRECTORY_PATH = "/home/ali"
+MATRIX_DIRECTORY_PATH = f"/home/ali/matrices"
 
 # AIS Danish maritime dataset
 DATABASE_NAME = "mobilitydb"
@@ -81,12 +81,13 @@ class Time_deltas_handler:
 
 
 
-        if os.path.exists(MATRIX_DIRECTORY_PATH):
-            shutil.rmtree(MATRIX_DIRECTORY_PATH)
-            os.makedirs(MATRIX_DIRECTORY_PATH)
+        if os.path.exists("/home/ali/matrices"):
+            shutil.rmtree("/home/ali/matrices")
+            os.makedirs("/home/ali/matrices")
         else:
-            os.makedirs(MATRIX_DIRECTORY_PATH)
+            os.makedirs("/home/ali/matrices")
 
+        self.log(f"CREATE MATRICE folder :/home/ali/matrices")
         # variables to keep track of the current state of the animation
         self.current_time_delta_key = 0
         self.current_time_delta_end = TIME_DELTA_SIZE - 1
@@ -120,7 +121,7 @@ class Time_deltas_handler:
 
         
         # Load the matrix from an HDF5 file
-        filename = f"{MATRIX_DIRECTORY_PATH}/matrix_{0}.npy"
+        filename = f"/home/ali/matrices/matrix_{0}.npy"
         loaded_matrix = np.load(filename, allow_pickle=True)
 
         self.time_deltas_matrices[0] = loaded_matrix
@@ -182,7 +183,7 @@ class Time_deltas_handler:
             for key in list(self.time_deltas_matrices.keys()):
                 if key not in self.time_deltas_to_keep:
                     del self.time_deltas_matrices[key]
-                    filename = f"{MATRIX_DIRECTORY_PATH}/matrix_{key}.npy"
+                    filename = f"/home/ali/matrices/matrix_{key}.npy"
                     os.remove(filename)
                     self.log(f"File {filename} deleted")
                     # gc.collect() #TODO measure time impact
@@ -221,7 +222,7 @@ class Time_deltas_handler:
         """
         Function called once the thread if completed.
         """
-        filename = f"{MATRIX_DIRECTORY_PATH}/matrix_{params['key']}.npy" 
+        filename = f"/home/ali/matrices/matrix_{params['key']}.npy" 
 
         self.time_deltas_matrices[params['key']] = np.load(filename, allow_pickle=True) # allow_pickle=True is required because the matrix contains WKT strings in the form of objects
      
@@ -445,12 +446,12 @@ class Matrix_generation_thread(QgsTask):
             arguments += [self.timestamps[0], str(len(self.timestamps)), GRANULARITY.value["name"], MATRIX_DIRECTORY_PATH, DATABASE_NAME, TPOINT_TABLE_NAME, TPOINT_ID_COLUMN_NAME, TPOINT_COLUMN_NAME]
             
             # PATHS
-            process_B_path = f"{DIRECTORY_PATH}/QGIS-MobilityDB/experiment8_subprocess/matrix_file_processed.py"
+            process_B_path = f"/home/ali/QGIS-MobilityDB/experiment8_subprocess/matrix_file_processed.py"
             python_path = sys.executable
-
+            self.log(f" python_path : {python_path}, process path {process_B_path}")
             command = [python_path, process_B_path, *arguments]
             result = subprocess.run(command, capture_output=True, text=True)
-            self.log(result.stdout.strip())
+            # self.log(result)
             self.log("file created" )
             self.result_params = {
                 'key': self.begin_frame
@@ -520,7 +521,8 @@ class Database_connector:
                             )
                         )
                     FROM public.{self.table_name} as a 
-                    WHERE a.{self.id_column_name} in ({ids_str});
+                    WHERE a.{self.id_column_name} in ({ids_str})
+                        AND a.{self.tpoint_column_name} IS NOT NULL;
                     """
             self.cursor.execute(query)
             rows = self.cursor.fetchall()

@@ -27,7 +27,6 @@ import numpy as np
 from shapely.geometry import Point
 from pymeos.db.psycopg import MobilityDB
 
-from pymeos import *
 import os
 import sys
 from datetime import timedelta, datetime
@@ -86,7 +85,7 @@ class Database_connector:
         except Exception as e:
             pass
 
-  
+
     def get_subset_of_tpoints(self, pstart, pend, xmin, ymin, xmax, ymax):
         """
         For each object in the ids_list :
@@ -94,10 +93,10 @@ class Database_connector:
             contained in the STBOX defined by the xmin, ymin, xmax, ymax.
         """
         try:
-           
+        
             ids_list = [ f"'{id[0]}'"  for id in self.ids_list]
             ids_str = ', '.join(map(str, ids_list))
-          
+        
             query = f"""
                     SELECT 
                         atStbox(
@@ -156,15 +155,15 @@ class Database_connector:
         self.connection.close()
 
 
-MATRIX_DIRECTORY_PATH = args[10]
-file_name = f"{MATRIX_DIRECTORY_PATH}/matrix_{begin_frame}.npy"
+MATRIX_DIRECTORY_PATH = "/home/ali/matrices"
+file_name = f"/home/ali/matrices/matrix_{begin_frame}.npy"
 
 
-  
+
 Time_granularities = {
                     # "MILLISECOND" : timedelta(milliseconds=1),
-                      "SECOND" : timedelta(seconds=1),
-                      "MINUTE" : timedelta(minutes=1),
+                    "SECOND" : timedelta(seconds=1),
+                    "MINUTE" : timedelta(minutes=1),
                     #   "HOUR" : timedelta(hours=1),
                     }
 
@@ -210,24 +209,14 @@ if not os.path.exists(file_name):
         for i in range(len(rows)):
             try:
                 traj_resampled = rows[i][0]
-                num_instants = traj.num_instants()
+                num_instants = traj_resampled.num_instants()
 
-                if num_instants == 1:
-                    print("1 point")
-                    # single_timestamp = traj.timestamps()[0].replace(tzinfo=None)
-                    # index = time_ranges.index(single_timestamp) - begin_frame
-                    # matrix[i][index] = traj.values()[0].wkt
+                start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - begin_frame
+                end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - begin_frame
 
-                elif num_instants >= 2:
-                    
-                    # traj_resampled = traj.temporal_sample(start=time_ranges[0],duration= GRANULARITY)
-                    
-                    start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - begin_frame
-                    end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - begin_frame
-
-                    trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
-                    matrix[i, start_index:end_index+1] = trajectory_array
-                    print(f"start_index: {start_index}, end_index: {end_index}, => {(end_index+1) - start_index}, len: {len(trajectory_array)}")
+                trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
+                matrix[i, start_index:end_index+1] = trajectory_array
+                # print(f"start_index: {start_index}, end_index: {end_index}, => {(end_index+1) - start_index}, len: {len(trajectory_array)}")
                         
             except:
                 continue
@@ -242,10 +231,11 @@ if not os.path.exists(file_name):
         logs += f"time to create matrix {begin_frame}: {total_time} seconds\n"
     except Exception as e:
         logs += f"Error: {e}\n"
-        with open(f"{MATRIX_DIRECTORY_PATH}/logs.txt", "a") as file:
+        with open(f"/home/ali/matrices/logs.txt", "a") as file:
             file.write(logs)
 
 
 
-with open(f"{MATRIX_DIRECTORY_PATH}/logs.txt", "a") as file:
+with open(f"/home/ali/matrices/logs.txt", "a") as file:
     file.write(logs)
+
