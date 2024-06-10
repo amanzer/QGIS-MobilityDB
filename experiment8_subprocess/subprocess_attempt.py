@@ -36,13 +36,26 @@ TIME_DELTA_DEQUEUE_SIZE =  10 # Length of the dequeue to keep the keys to keep i
 
 PERCENTAGE_OF_OBJECTS = 0.6 # To not overload the memory, we only take a percentage of the ships in the database
 TIME_DELTA_SIZE = 240 # Number of frames associated to one Time delta
-GRANULARITY = Time_granularity.MINUTE
+GRANULARITY = Time_granularity.SECOND
 SRID = 4326
 FPS = 30
 
 DIRECTORY_PATH = os.getcwd()
 MATRIX_DIRECTORY_PATH = f'{DIRECTORY_PATH}/matrices'
 
+# AIS Danish maritime dataset
+# DATABASE_NAME = "mobilitydb"
+# TPOINT_TABLE_NAME = "PyMEOS_demo"
+# TPOINT_ID_COLUMN_NAME = "MMSI"
+# TPOINT_COLUMN_NAME = "trajectory"
+
+
+# LIMA PERU drivers dataset
+
+DATABASE_NAME = "lima_demo"
+TPOINT_TABLE_NAME = "driver_paths"
+TPOINT_ID_COLUMN_NAME = "driver_id"
+TPOINT_COLUMN_NAME = "trajectory"
 
 class Time_deltas_handler:
     """
@@ -425,9 +438,8 @@ class Matrix_generation_thread(QgsTask):
             
             arguments = [self.begin_frame, self.end_frame, PERCENTAGE_OF_OBJECTS, x_min, y_min, x_max, y_max]
             arguments = [str(arg) for arg in arguments]
-            arguments += [self.timestamps[0], str(len(self.timestamps)), GRANULARITY.value["name"], MATRIX_DIRECTORY_PATH]
+            arguments += [self.timestamps[0], str(len(self.timestamps)), GRANULARITY.value["name"], MATRIX_DIRECTORY_PATH, DATABASE_NAME, TPOINT_TABLE_NAME, TPOINT_ID_COLUMN_NAME, TPOINT_COLUMN_NAME]
             
-
             # PATHS
             process_B_path = f"{DIRECTORY_PATH}/QGIS-MobilityDB/experiment8_subprocess/matrix_file.py"
             python_path = sys.executable
@@ -461,13 +473,13 @@ class Database_connector:
             connection_params = {
             "host": "localhost",
             "port": 5432,
-            "dbname": "mobilitydb",
+            "dbname": DATABASE_NAME,
             "user": "postgres",
             "password": "postgres"
             }
-            self.table_name = "PyMEOS_demo"
-            self.id_column_name = "MMSI"
-            self.tpoint_column_name = "trajectory"                    
+            self.table_name = TPOINT_TABLE_NAME
+            self.id_column_name = TPOINT_ID_COLUMN_NAME
+            self.tpoint_column_name = TPOINT_COLUMN_NAME                  
             self.connection = MobilityDB.connect(**connection_params)
 
             self.cursor = self.connection.cursor()

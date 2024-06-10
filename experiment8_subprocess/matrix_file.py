@@ -4,6 +4,21 @@ File used to create the matrices for the time deltas between the begin_frame and
 
 The matrices are saved in the /home/ali/matrices/ folder.
 
+
+            # arguments :[ 
+            # 0: begin_frame, 
+            # 1: end_frame, 
+            # 2: PERCENTAGE_OF_OBJECTS, 
+            # 3: x_min, 4: y_min, 5: x_max, 6: y_max, 
+            # 7: start_timestamp, 
+            # 8: total_frames, 
+            # 9: granularity, 
+            # 10: matrix_directory_path, 
+            # 11: database_name, 
+            # 12: table_name, 
+            # 13: id_column_name, 
+            # 14: tpoint_column_name]
+
 """
 
 import numpy as np
@@ -35,6 +50,11 @@ PERCENTAGE_OF_OBJECTS = float(args[2])
 SRID = 4326
 
 
+DATABASE_NAME = args[11]
+TPOINT_TABLE_NAME = args[12]
+TPOINT_ID_COLUMN_NAME = args[13]
+TPOINT_COLUMN_NAME = args[14]
+
 
 
 class Database_connector:
@@ -47,13 +67,13 @@ class Database_connector:
             connection_params = {
             "host": "localhost",
             "port": 5432,
-            "dbname": "mobilitydb",
+            "dbname": DATABASE_NAME,
             "user": "postgres",
             "password": "postgres"
             }
-            self.table_name = "PyMEOS_demo"
-            self.id_column_name = "MMSI"
-            self.tpoint_column_name = "trajectory"                    
+            self.table_name = TPOINT_TABLE_NAME
+            self.id_column_name = TPOINT_ID_COLUMN_NAME
+            self.tpoint_column_name = TPOINT_COLUMN_NAME               
             self.connection = MobilityDB.connect(**connection_params)
 
             self.cursor = self.connection.cursor()
@@ -138,10 +158,11 @@ file_name = f"{MATRIX_DIRECTORY_PATH}/matrix_{begin_frame}.npy"
 
 
   
-Time_granularities = {"MILLISECOND" : timedelta(milliseconds=1),
+Time_granularities = {
+                    # "MILLISECOND" : timedelta(milliseconds=1),
                       "SECOND" : timedelta(seconds=1),
                       "MINUTE" : timedelta(minutes=1),
-                      "HOUR" : timedelta(hours=1),
+                    #   "HOUR" : timedelta(hours=1),
                     }
 
 
