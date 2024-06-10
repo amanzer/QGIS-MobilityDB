@@ -1,7 +1,9 @@
 """
-TODOS :
 
-- Need to handle the files   : delete file with the key 
+Known issues :
+
+-Temporal Controller roller over(from frame 0 to the last frame) is not handled
+-User moving the temporal controller tick by himself not handled
 
 """
 
@@ -36,7 +38,7 @@ TIME_DELTA_DEQUEUE_SIZE =  10 # Length of the dequeue to keep the keys to keep i
 
 PERCENTAGE_OF_OBJECTS = 0.6 # To not overload the memory, we only take a percentage of the ships in the database
 TIME_DELTA_SIZE = 240 # Number of frames associated to one Time delta
-GRANULARITY = Time_granularity.SECOND
+GRANULARITY = Time_granularity.MINUTE
 SRID = 4326
 FPS = 30
 
@@ -44,18 +46,18 @@ DIRECTORY_PATH = os.getcwd()
 MATRIX_DIRECTORY_PATH = f'{DIRECTORY_PATH}/matrices'
 
 # AIS Danish maritime dataset
-# DATABASE_NAME = "mobilitydb"
-# TPOINT_TABLE_NAME = "PyMEOS_demo"
-# TPOINT_ID_COLUMN_NAME = "MMSI"
-# TPOINT_COLUMN_NAME = "trajectory"
+DATABASE_NAME = "mobilitydb"
+TPOINT_TABLE_NAME = "PyMEOS_demo"
+TPOINT_ID_COLUMN_NAME = "MMSI"
+TPOINT_COLUMN_NAME = "trajectory"
 
 
 # LIMA PERU drivers dataset
 
-DATABASE_NAME = "lima_demo"
-TPOINT_TABLE_NAME = "driver_paths"
-TPOINT_ID_COLUMN_NAME = "driver_id"
-TPOINT_COLUMN_NAME = "trajectory"
+# DATABASE_NAME = "lima_demo"
+# TPOINT_TABLE_NAME = "driver_paths"
+# TPOINT_ID_COLUMN_NAME = "driver_id"
+# TPOINT_COLUMN_NAME = "trajectory"
 
 class Time_deltas_handler:
     """
@@ -139,9 +141,8 @@ class Time_deltas_handler:
         """
         start_date = self.db.get_min_timestamp()
         end_date = self.db.get_max_timestamp()
-        self.total_frames = math.ceil( (end_date - start_date) // GRANULARITY.value["timedelta"] )
-
-        remainder_frames = self.total_frames % TIME_DELTA_SIZE
+        self.total_frames = math.ceil( (end_date - start_date) // GRANULARITY.value["timedelta"] ) + 1
+        remainder_frames = (self.total_frames) % TIME_DELTA_SIZE
         self.total_frames +=  remainder_frames
 
         self.timestamps = [start_date + i * GRANULARITY.value["timedelta"] for i in range(self.total_frames)]
@@ -181,6 +182,9 @@ class Time_deltas_handler:
             for key in list(self.time_deltas_matrices.keys()):
                 if key not in self.time_deltas_to_keep:
                     del self.time_deltas_matrices[key]
+                    filename = f"{MATRIX_DIRECTORY_PATH}/matrix_{key}.npy"
+                    os.remove(filename)
+                    self.log(f"File {filename} deleted")
                     # gc.collect() #TODO measure time impact
 
     
