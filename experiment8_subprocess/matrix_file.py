@@ -19,6 +19,8 @@ The matrices are saved in the /home/ali/matrices/ folder.
             # 13: id_column_name, 
             # 14: tpoint_column_name]
 
+To measure the size of matrices folder : du -sh --block-size=MB matrices            
+
 """
 
 import numpy as np
@@ -169,72 +171,79 @@ Time_granularities = {
 # check if file does't already exist
 
 if not os.path.exists(file_name):
-    pymeos_initialize()
-    db = Database_connector()
+    try:
+        pymeos_initialize()
+        db = Database_connector()
 
-    x_min = float(args[3])
-    y_min = float(args[4])
-    x_max = float(args[5])
-    y_max = float(args[6])
+        x_min = float(args[3])
+        y_min = float(args[4])
+        x_max = float(args[5])
+        y_max = float(args[6])
 
-    start_date = args[7]
-    start_date = datetime.strptime(start_date, '%Y-%m-%d %H:%M:%S')
-
-
-    total_frames = int(args[8])
-    GRANULARITY = Time_granularities[args[9]]
-
-    timestamps = []
-    for i in range(total_frames): 
-        timestamps.append(start_date + i*GRANULARITY)
+        start_date = args[7]
+        start_date = datetime.strptime(start_date, '%Y-%m-%d %H:%M:%S')
 
 
+        total_frames = int(args[8])
+        GRANULARITY = Time_granularities[args[9]]
 
-    p_start = timestamps[begin_frame]
-    p_end = timestamps[end_frame]
-    # print(p_start, p_end, x_min, y_min, x_max, y_max)
-    rows = db.get_subset_of_tpoints(p_start, p_end, x_min, y_min, x_max, y_max)    
-      
-            
-    empty_point_wkt = Point().wkt  # "POINT EMPTY"
-    matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
-   
-    time_ranges = timestamps
-    now = time.time()
+        timestamps = []
+        for i in range(total_frames): 
+            timestamps.append(start_date + i*GRANULARITY)
 
-    
-    for i in range(len(rows)):
-        try:
-            traj = rows[i][0]
-            traj = traj.temporal_precision(GRANULARITY) 
-            num_instants = traj.num_instants()
-            if num_instants == 0:
-                continue
-            elif num_instants == 1:
-                single_timestamp = traj.timestamps()[0].replace(tzinfo=None)
-                index = time_ranges.index(single_timestamp) - begin_frame
-                matrix[i][index] = traj.values()[0].wkt
-               
-            elif num_instants >= 2:
-                traj_resampled = traj.temporal_sample(start=time_ranges[0],duration= GRANULARITY)
-                
-                start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - begin_frame
-                end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - begin_frame
+
+
+        p_start = timestamps[begin_frame]
+        p_end = timestamps[end_frame]
+        # print(p_start, p_end, x_min, y_min, x_max, y_max)
+        rows = db.get_subset_of_tpoints(p_start, p_end, x_min, y_min, x_max, y_max)    
         
-                trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
-                matrix[i, start_index:end_index+1] = trajectory_array
-       
-        except:
-            continue
+                
+        empty_point_wkt = Point().wkt  # "POINT EMPTY"
+        matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
     
-    np.save(file_name, matrix)
-    
-    db.close()
-    pymeos_finalize()
-    total_time = time.time() - now
-    frames_for_30_fps= 30 * total_time
-    print(f"================================================================     Matrix {begin_frame} created in {total_time} seconds, {frames_for_30_fps} frames for 30 fps animation.")
-    logs += f"time to create matrix {begin_frame}: {total_time} seconds\n"
+        time_ranges = timestamps
+        now = time.time()
+
+        
+        for i in range(len(rows)):
+            try:
+                traj = rows[i][0]
+                traj = traj.temporal_precision(GRANULARITY) 
+                num_instants = traj.num_instants()
+                if num_instants == 0:
+                    continue
+                elif num_instants == 1:
+                    single_timestamp = traj.timestamps()[0].replace(tzinfo=None)
+                    index = time_ranges.index(single_timestamp) - begin_frame
+                    matrix[i][index] = traj.values()[0].wkt
+                
+                elif num_instants >= 2:
+                    traj_resampled = traj.temporal_sample(start=time_ranges[0],duration= GRANULARITY)
+                    
+                    start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - begin_frame
+                    end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - begin_frame
+            
+                    trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
+                    matrix[i, start_index:end_index+1] = trajectory_array
+        
+            except:
+                continue
+        
+        np.save(file_name, matrix)
+        
+        db.close()
+        pymeos_finalize()
+        total_time = time.time() - now
+        frames_for_30_fps= 30 * total_time
+        print(f"================================================================     Matrix {begin_frame} created in {total_time} seconds, {frames_for_30_fps} frames for 30 fps animation.")
+        logs += f"time to create matrix {begin_frame}: {total_time} seconds\n"
+    except Exception as e:
+        logs += f"Error: {e}\n"
+        with open(f"{MATRIX_DIRECTORY_PATH}/logs.txt", "a") as file:
+            file.write(logs)
+
+
 
 with open(f"{MATRIX_DIRECTORY_PATH}/logs.txt", "a") as file:
     file.write(logs)
