@@ -17,7 +17,7 @@ from datetime import timedelta, datetime
 from pymeos import *
 import time
 
-
+logs = ""
 now = time.time()
 
 FPS_DEQUEUE_SIZE = 5 # Length of the dequeue to calculate the average FPS
@@ -25,7 +25,7 @@ TIME_DELTA_DEQUEUE_SIZE =  10 # Length of the dequeue to keep the keys to keep i
 
 
 args = sys.argv[1:]
-
+logs += f"Args: {args}\n"
 begin_frame = int(args[0])
 end_frame = int(args[1])
 TIME_DELTA_SIZE = end_frame - begin_frame + 1
@@ -33,6 +33,7 @@ PERCENTAGE_OF_OBJECTS = float(args[2])
 
 
 SRID = 4326
+
 
 
 
@@ -132,8 +133,8 @@ class Database_connector:
         self.connection.close()
 
 
-
-file_name = f"/home/ali/matrices/matrix_{begin_frame}.npy"
+MATRIX_DIRECTORY_PATH = args[10]
+file_name = f"{MATRIX_DIRECTORY_PATH}/matrix_{begin_frame}.npy"
 
 
   
@@ -212,3 +213,7 @@ if not os.path.exists(file_name):
     total_time = time.time() - now
     frames_for_30_fps= 30 * total_time
     print(f"================================================================     Matrix {begin_frame} created in {total_time} seconds, {frames_for_30_fps} frames for 30 fps animation.")
+    logs += f"time to create matrix {begin_frame}: {total_time} seconds\n"
+
+with open(f"{MATRIX_DIRECTORY_PATH}/logs.txt", "a") as file:
+    file.write(logs)

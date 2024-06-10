@@ -25,12 +25,13 @@ import math
 import subprocess
 import shutil
 import os
+import sys
 
 class Time_granularity(Enum):
-    MILLISECOND = {"timedelta" : timedelta(milliseconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Milliseconds, "name" : "MILLISECOND"}
+    # MILLISECOND = {"timedelta" : timedelta(milliseconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Milliseconds, "name" : "MILLISECOND"}
     SECOND = {"timedelta" : timedelta(seconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Seconds, "name" : "SECOND"}
     MINUTE = {"timedelta" : timedelta(minutes=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Minutes, "name" : "MINUTE"}
-    HOUR = {"timedelta" : timedelta(hours=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Hours, "name" : "HOUR"}
+    # HOUR = {"timedelta" : timedelta(hours=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Hours, "name" : "HOUR"}
   
 
 
@@ -38,11 +39,14 @@ FPS_DEQUEUE_SIZE = 5 # Length of the dequeue to calculate the average FPS
 TIME_DELTA_DEQUEUE_SIZE =  10 # Length of the dequeue to keep the keys to keep in the buffer
 
 
-PERCENTAGE_OF_OBJECTS = 1 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 48 # Number of frames associated to one Time delta
+PERCENTAGE_OF_OBJECTS = 0.6 # To not overload the memory, we only take a percentage of the ships in the database
+TIME_DELTA_SIZE = 240 # Number of frames associated to one Time delta
 GRANULARITY = Time_granularity.MINUTE
 SRID = 4326
 FPS = 30
+
+DIRECTORY_PATH = os.getcwd()
+MATRIX_DIRECTORY_PATH = f'{DIRECTORY_PATH}/matrices'
 
 
 class Time_deltas_handler:
@@ -66,10 +70,12 @@ class Time_deltas_handler:
         self.time_deltas_to_keep.append(0)
 
 
-        # Creating a clean folder for the matrix files
-        directory_path = f'/home/ali/matrices/'
-        shutil.rmtree(directory_path)
-        os.makedirs(directory_path)
+
+        if os.path.exists(MATRIX_DIRECTORY_PATH):
+            shutil.rmtree(MATRIX_DIRECTORY_PATH)
+            os.makedirs(MATRIX_DIRECTORY_PATH)
+        else:
+            os.makedirs(MATRIX_DIRECTORY_PATH)
 
         # variables to keep track of the current state of the animation
         self.current_time_delta_key = 0
@@ -82,12 +88,18 @@ class Time_deltas_handler:
         beg_frame = time_delta_key
         end_frame = (time_delta_key + TIME_DELTA_SIZE) -1
 
-        task = QgisThread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
-                                     self.db, self.qviz.get_canvas_extent(), self.timestamps_strings, self.on_thread_completed, self.raise_error)
+
+
+        task_features_gen = Qgis_features_generation_thread(f"Generating Qgis features for all objects","qViz", len(self.db.ids_list), self.qviz.vlayer.fields(), self.timestamps_strings[0], self.set_qgis_features, self.raise_error)
+        self.task_manager.addTask(task_features_gen)
+
+        task_matrix_gen = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
+                                     self.db, self.qviz.get_canvas_extent(), self.timestamps_strings, self.set_matrix, self.raise_error)
 
         # Start the animation when the first batch is fetched
-        task.taskCompleted.connect(self.initiate_animation)
-        self.task_manager.addTask(task)     
+        task_matrix_gen.taskCompleted.connect(self.initiate_animation)
+        self.task_manager.addTask(task_matrix_gen)     
+
         # self.task_manager.allTasksFinished.connect(self.update_vlayer_features)
     
     def initiate_animation(self):
@@ -98,7 +110,7 @@ class Time_deltas_handler:
 
         
         # Load the matrix from an HDF5 file
-        filename = f"/home/ali/matrices/matrix_{0}.npy"
+        filename = f"{MATRIX_DIRECTORY_PATH}/matrix_{0}.npy"
         loaded_matrix = np.load(filename, allow_pickle=True)
 
         self.time_deltas_matrices[0] = loaded_matrix
@@ -106,8 +118,8 @@ class Time_deltas_handler:
         time_delta_key = TIME_DELTA_SIZE
         beg_frame = time_delta_key
         end_frame = (time_delta_key + TIME_DELTA_SIZE) -1
-        task = QgisThread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
-                                     self.db, self.qviz.get_canvas_extent(), self.timestamps_strings, self.on_thread_completed, self.raise_error)
+        task = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
+                                     self.db, self.qviz.get_canvas_extent(), self.timestamps_strings, self.set_matrix, self.raise_error)
 
         self.task_manager.addTask(task)   
         self.new_frame_features(0)
@@ -120,6 +132,9 @@ class Time_deltas_handler:
         start_date = self.db.get_min_timestamp()
         end_date = self.db.get_max_timestamp()
         self.total_frames = math.ceil( (end_date - start_date) // GRANULARITY.value["timedelta"] )
+
+        remainder_frames = self.total_frames % TIME_DELTA_SIZE
+        self.total_frames +=  remainder_frames
 
         self.timestamps = [start_date + i * GRANULARITY.value["timedelta"] for i in range(self.total_frames)]
         self.timestamps = [dt.replace(tzinfo=None) for dt in self.timestamps]
@@ -175,22 +190,28 @@ class Time_deltas_handler:
         beg_frame = time_delta_key
         end_frame = (time_delta_key + TIME_DELTA_SIZE) -1
         
-        if end_frame  <= (len(self.timestamps)) and beg_frame >= 0: #Either bound has to be valid 
+        if end_frame  <= self.total_frames and beg_frame >= 0: #Either bound has to be valid 
             # self.qviz.pause()
-            task = QgisThread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
-                                     self.db, self.qviz.get_canvas_extent(), self.timestamps_strings, self.on_thread_completed, self.raise_error)
+            task = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
+                                     self.db, self.qviz.get_canvas_extent(), self.timestamps_strings, self.set_matrix, self.raise_error)
             self.task_manager.addTask(task)        
 
 
-    def on_thread_completed(self, params):
-        """
-        Store the time delta data fetched by the thread.
-        """
-        filename = f'/home/ali/matrices/matrix_{params['key']}.npy'
 
-        loaded_matrix = np.load(filename, allow_pickle=True)
+    def set_qgis_features(self, params):
+        qgis_features_list = params['qgis_features_list']
 
-        self.time_deltas_matrices[params['key']] = loaded_matrix
+        self.qviz.set_qgis_features(qgis_features_list)
+        
+
+
+    def set_matrix(self, params):
+        """
+        Function called once the thread if completed.
+        """
+        filename = f"{MATRIX_DIRECTORY_PATH}/matrix_{params['key']}.npy" 
+
+        self.time_deltas_matrices[params['key']] = np.load(filename, allow_pickle=True) # allow_pickle=True is required because the matrix contains WKT strings in the form of objects
      
     
 
@@ -204,34 +225,7 @@ class Time_deltas_handler:
             self.log("Unknown error")
 
 
-    def generate_qgs_features(self):
-        """
-        This method creates the QGIS features for each coordinate associated to the given
-        time delta and frame number.
-        """
-        datetime_obj = QDateTime.fromString(self.timestamps_strings[0], "yyyy-MM-dd HH:mm:ss")
-        vlayer_fields = self.qviz.vlayer.fields()
-
-        empty_point_wkt = Point().wkt  # "POINT EMPTY"
-        # create a numpy array of size len(ids_list) with empty_point_wkt
-  
-        qgis_fields_list = []
-        
-        for i in range(len(self.db.ids_list)):
-            feat = QgsFeature(vlayer_fields)
-            feat.setAttributes([datetime_obj])  # Set its attributes
-
-            # Create geometry from WKT string
-            geom = QgsGeometry.fromWkt(empty_point_wkt)
-            feat.setGeometry(geom)  # Set its geometry
-            qgis_fields_list.append(feat)
-        
-        # TODO : measure time impact of passing the list back to the Controller class to update the vlayer 
-        self.qviz.vlayer.startEditing()
-        self.qviz.vlayer.addFeatures(qgis_fields_list) # Add list of features to vlayer
-        self.qviz.vlayer.commitChanges()
-        iface.vectorLayerTools().stopEditing(self.qviz.vlayer)
-        
+    
 
     def new_frame_features(self, frame_number=0):
         """
@@ -333,7 +327,71 @@ class Time_deltas_handler:
 
 
 
-class QgisThread(QgsTask):
+class Qgis_features_generation_thread(QgsTask):
+    """
+    Creates a thread that fetches data from the MobilityDB database 
+    Parameters include : the time delta, STBOX paramters, Time range...
+    
+    This allows to keep the UI responsive while the data is being fetched.
+    """
+    def __init__(self, description,project_title, total_objects,vlayer_fields, datetime_str, finished_fnc, failed_fnc):
+        super(Qgis_features_generation_thread, self).__init__(description, QgsTask.CanCancel)
+
+        self.project_title = project_title
+        
+        self.total_objects = total_objects
+        self.vlayer_fields = vlayer_fields
+        self.datetime_str = datetime_str
+        self.finished_fnc = finished_fnc
+        self.failed_fnc = failed_fnc
+
+        self.result_params = None
+        self.error_msg = None
+
+    def finished(self, result):
+        if result:
+            self.finished_fnc(self.result_params)
+        else:
+            self.failed_fnc(self.error_msg)
+
+    def run(self):
+        """
+        Function that is executed in parallel to fetch all the subsets of Tpoints from the MobilityDB database,
+        for the given time delta.
+        """
+        try:
+            datetime_obj = QDateTime.fromString(self.datetime_str, "yyyy-MM-dd HH:mm:ss")
+            vlayer_fields = self.vlayer_fields
+
+            empty_point_wkt = Point().wkt  # "POINT EMPTY"
+    
+            qgis_features_list = []
+
+            for i in range(self.total_objects):
+                feat = QgsFeature(vlayer_fields)
+                feat.setAttributes([datetime_obj])  # Set its attributes
+
+                # Create geometry from WKT string
+                geom = QgsGeometry.fromWkt(empty_point_wkt)
+                feat.setGeometry(geom)  # Set its geometry
+                qgis_features_list.append(feat)
+
+            self.log(f"{self.total_objects} Qgis features created")
+
+            self.result_params = {
+                'qgis_features_list': qgis_features_list
+            }
+        except ValueError as e:
+            self.error_msg = str(e)
+            return False
+        return True
+
+    def log(self, msg):
+        QgsMessageLog.logMessage(msg, 'qViz', level=Qgis.Info)
+
+
+
+class Matrix_generation_thread(QgsTask):
     """
     Creates a thread that fetches data from the MobilityDB database 
     Parameters include : the time delta, STBOX paramters, Time range...
@@ -341,7 +399,7 @@ class QgisThread(QgsTask):
     This allows to keep the UI responsive while the data is being fetched.
     """
     def __init__(self, description,project_title, beg_frame, end_frame, db, extent, timestamps, finished_fnc, failed_fnc):
-        super(QgisThread, self).__init__(description, QgsTask.CanCancel)
+        super(Matrix_generation_thread, self).__init__(description, QgsTask.CanCancel)
 
         self.project_title = project_title
         
@@ -369,16 +427,17 @@ class QgisThread(QgsTask):
         """
         try:
             x_min,y_min, x_max, y_max = self.extent
-            p_start = self.timestamps[self.begin_frame]
-            p_end = self.timestamps[self.end_frame]
-     
+            
             arguments = [self.begin_frame, self.end_frame, PERCENTAGE_OF_OBJECTS, x_min, y_min, x_max, y_max]
             arguments = [str(arg) for arg in arguments]
-            arguments += [self.timestamps[0], str(len(self.timestamps)), GRANULARITY.value["name"]]
+            arguments += [self.timestamps[0], str(len(self.timestamps)), GRANULARITY.value["name"], MATRIX_DIRECTORY_PATH]
             
 
-            # Command to execute Program B
-            command = ['/usr/bin/python3', '/home/ali/QGIS-MobilityDB/experiment8_removing_qgsThread/matrix_file.py', *arguments]
+            # PATHS
+            process_B_path = f"{DIRECTORY_PATH}/QGIS-MobilityDB/experiment8_subprocess/matrix_file.py"
+            python_path = sys.executable
+
+            command = [python_path, process_B_path, *arguments]
             result = subprocess.run(command, capture_output=True, text=True)
             self.log(result.stdout.strip())
             self.log("file created" )
@@ -392,6 +451,7 @@ class QgisThread(QgsTask):
 
     def log(self, msg):
         QgsMessageLog.logMessage(msg, 'qViz', level=Qgis.Info)
+
 
 
 
@@ -511,8 +571,6 @@ class QVIZ:
 
         self.handler = Time_deltas_handler(self)
 
-
-        self.handler.generate_qgs_features()
     
         # self.dq_FPS = deque(maxlen=LEN_DEQUEUE_FPS)
         # for i in range(LEN_DEQUEUE_FPS):
@@ -522,6 +580,11 @@ class QVIZ:
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         self.canvas.extentsChanged.connect(self.pause)
     
+    def set_qgis_features(self, qgis_features_list):
+        self.vlayer.startEditing()
+        self.vlayer.addFeatures(qgis_features_list) # Add list of features to vlayer
+        self.vlayer.commitChanges()
+        iface.vectorLayerTools().stopEditing(self.vlayer)
 
     def set_temporal_controller_extent(self, time_range):
         if self.temporalController:
