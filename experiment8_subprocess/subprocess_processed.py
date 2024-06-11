@@ -439,6 +439,7 @@ class Matrix_generation_thread(QgsTask):
         for the given time delta.
         """
         try:
+            now = time.time()
             x_min,y_min, x_max, y_max = self.extent
             
             arguments = [self.begin_frame, self.end_frame, PERCENTAGE_OF_OBJECTS, x_min, y_min, x_max, y_max]
@@ -452,7 +453,8 @@ class Matrix_generation_thread(QgsTask):
             command = [python_path, process_B_path, *arguments]
             result = subprocess.run(command, capture_output=True, text=True)
             # self.log(result)
-            self.log("file created" )
+            TIME_total = time.time() - now
+            self.log(f"file created in {TIME_total} s, frames for 30 FPS animation at this rate : { TIME_total * 30}" )
             self.result_params = {
                 'key': self.begin_frame
             }

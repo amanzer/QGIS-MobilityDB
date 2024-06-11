@@ -33,12 +33,12 @@ class Time_granularity(Enum):
 
 
 FPS_DEQUEUE_SIZE = 5 # Length of the dequeue to calculate the average FPS
-TIME_DELTA_DEQUEUE_SIZE =  10 # Length of the dequeue to keep the keys to keep in the buffer
+TIME_DELTA_DEQUEUE_SIZE =  4 # Length of the dequeue to keep the keys to keep in the buffer
 
 
-PERCENTAGE_OF_OBJECTS = 0.6 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 240 # Number of frames associated to one Time delta
-GRANULARITY = Time_granularity.MINUTE
+PERCENTAGE_OF_OBJECTS = 0.2 # To not overload the memory, we only take a percentage of the ships in the database
+TIME_DELTA_SIZE = 300  # Number of frames associated to one Time delta
+
 SRID = 4326
 FPS = 30
 
@@ -50,7 +50,7 @@ DATABASE_NAME = "mobilitydb"
 TPOINT_TABLE_NAME = "PyMEOS_demo"
 TPOINT_ID_COLUMN_NAME = "MMSI"
 TPOINT_COLUMN_NAME = "trajectory"
-
+GRANULARITY = Time_granularity.MINUTE
 
 # LIMA PERU drivers dataset
 
@@ -58,7 +58,7 @@ TPOINT_COLUMN_NAME = "trajectory"
 # TPOINT_TABLE_NAME = "driver_paths"
 # TPOINT_ID_COLUMN_NAME = "driver_id"
 # TPOINT_COLUMN_NAME = "trajectory"
-
+# GRANULARITY = Time_granularity.SECOND
 class Time_deltas_handler:
     """
     Logic to handle the time deltas during the animation AND the data stored in memory.
@@ -270,8 +270,8 @@ class Time_deltas_handler:
                     self.log(f"                                          FETCH NEXT BATCH  - forward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
                     self.update_cache(self.current_time_delta_key)
                     self.fetch_next_data(self.current_time_delta_key+TIME_DELTA_SIZE)
-                    if self.task_manager.countActiveTasks() != 0:
-                        self.qviz.pause()
+                    # if self.task_manager.countActiveTasks() != 0:
+                    #     self.qviz.pause()
 
                     self.update_vlayer_features()
                     self.changed_key = True
@@ -288,8 +288,8 @@ class Time_deltas_handler:
                     self.update_cache(self.current_time_delta_key)
                     self.fetch_next_data(self.current_time_delta_key-TIME_DELTA_SIZE)
                     self.changed_key = True
-                    if self.task_manager.countActiveTasks() != 0:
-                        self.qviz.pause()
+                    # if self.task_manager.countActiveTasks() != 0:
+                    #     self.qviz.pause()
         else:
             if self.changed_key:
                 if frame_number < self.current_time_delta_key:
@@ -438,6 +438,7 @@ class Matrix_generation_thread(QgsTask):
         for the given time delta.
         """
         try:
+            now = time.time()
             x_min,y_min, x_max, y_max = self.extent
             
             arguments = [self.begin_frame, self.end_frame, PERCENTAGE_OF_OBJECTS, x_min, y_min, x_max, y_max]
@@ -450,8 +451,9 @@ class Matrix_generation_thread(QgsTask):
 
             command = [python_path, process_B_path, *arguments]
             result = subprocess.run(command, capture_output=True, text=True)
-            self.log(result.stdout.strip())
-            self.log("file created" )
+            # self.log(result.stdout.strip())
+            TIME_total = time.time() - now
+            self.log(f"file created in {TIME_total} s, frames for 30 FPS animation at this rate : { TIME_total * 30}" )
             self.result_params = {
                 'key': self.begin_frame
             }

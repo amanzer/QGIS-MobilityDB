@@ -111,8 +111,7 @@ class Database_connector:
                             )
                         )
                     FROM public.{self.table_name} as a 
-                    WHERE a.{self.id_column_name} in ({ids_str})
-                    AND a.{self.tpoint_column_name} IS NOT NULL;
+                    WHERE a.{self.id_column_name} in ({ids_str});
                     """
             self.cursor.execute(query)
             # print(query)
@@ -196,27 +195,31 @@ if not os.path.exists(file_name):
         p_start = timestamps[begin_frame]
         p_end = timestamps[end_frame]
         # print(p_start, p_end, x_min, y_min, x_max, y_max)
+        now_db = time.time()
         rows = db.get_subset_of_tpoints(p_start, p_end, x_min, y_min, x_max, y_max)    
-        
+        logs += f"fetching trajectories from db : {time.time()- now_db} \n"
                 
+            
+        now = time.time()
         empty_point_wkt = Point().wkt  # "POINT EMPTY"
         matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
     
         time_ranges = timestamps
-        now = time.time()
+        
 
         
         for i in range(len(rows)):
             try:
-                traj_resampled = rows[i][0]
-                num_instants = traj_resampled.num_instants()
+                if rows[i][0] is not None:
+                    traj_resampled = rows[i][0]
+                    num_instants = traj_resampled.num_instants()
 
-                start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - begin_frame
-                end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - begin_frame
+                    start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - begin_frame
+                    end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - begin_frame
 
-                trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
-                matrix[i, start_index:end_index+1] = trajectory_array
-                # print(f"start_index: {start_index}, end_index: {end_index}, => {(end_index+1) - start_index}, len: {len(trajectory_array)}")
+                    trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
+                    matrix[i, start_index:end_index+1] = trajectory_array
+                    # print(f"start_index: {start_index}, end_index: {end_index}, => {(end_index+1) - start_index}, len: {len(trajectory_array)}")
                         
             except:
                 continue
@@ -228,7 +231,7 @@ if not os.path.exists(file_name):
         total_time = time.time() - now
         frames_for_30_fps= 30 * total_time
         print(f"================================================================     Matrix {begin_frame} created in {total_time} seconds, {frames_for_30_fps} frames for 30 fps animation.")
-        logs += f"time to create matrix {begin_frame}: {total_time} seconds\n"
+        logs += f"time to create and fill the  matrix {begin_frame}: {total_time} seconds\n"
     except Exception as e:
         logs += f"Error: {e}\n"
         with open(f"/home/ali/matrices/logs.txt", "a") as file:

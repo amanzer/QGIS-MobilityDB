@@ -196,8 +196,9 @@ if not os.path.exists(file_name):
         p_start = timestamps[begin_frame]
         p_end = timestamps[end_frame]
         # print(p_start, p_end, x_min, y_min, x_max, y_max)
+        now_db = time.time()
         rows = db.get_subset_of_tpoints(p_start, p_end, x_min, y_min, x_max, y_max)    
-        
+        logs += f"Time to fetch subset of tpoints: {time.time() - now_db} seconds\n"
                 
         empty_point_wkt = Point().wkt  # "POINT EMPTY"
         matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
@@ -205,7 +206,6 @@ if not os.path.exists(file_name):
         time_ranges = timestamps
         now = time.time()
 
-        
         for i in range(len(rows)):
             try:
                 traj = rows[i][0]
@@ -237,7 +237,7 @@ if not os.path.exists(file_name):
         total_time = time.time() - now
         frames_for_30_fps= 30 * total_time
         print(f"================================================================     Matrix {begin_frame} created in {total_time} seconds, {frames_for_30_fps} frames for 30 fps animation.")
-        logs += f"time to create matrix {begin_frame}: {total_time} seconds\n"
+        logs += f"time to create and fill the matrix {begin_frame}: {total_time} seconds\n"
     except Exception as e:
         logs += f"Error: {e}\n"
         with open(f"{MATRIX_DIRECTORY_PATH}/logs.txt", "a") as file:
