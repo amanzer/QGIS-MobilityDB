@@ -1,0 +1,45 @@
+Timer unit: 1e-09 s
+
+Total time: 41.6863 s
+File: /tmp/ipykernel_16413/2742674835.py
+Function: opr at line 1
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+     1                                           def opr(rows):
+     2         1     324475.0 324475.0      0.0      empty_point_wkt = Point().wkt  # "POINT EMPTY"
+     3         1   98898510.0    1e+08      0.2      matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
+     4                                           
+     5         1       1010.0   1010.0      0.0      time_ranges = timestamps
+     6         1       2479.0   2479.0      0.0      now = time.time()
+     7                                           
+     8      5822    4223820.0    725.5      0.0      for i in range(len(rows)):
+     9      5821    5868759.0   1008.2      0.0          if rows[i][0] is not None:
+    10      3998     978809.0    244.8      0.0              try:
+    11      3998    1632026.0    408.2      0.0                  traj_resampled = rows[i][0]
+    12      3998   46911687.0  11733.8      0.1                  num_instants = traj_resampled.num_instants()
+    13      3998    2494600.0    624.0      0.0                  if num_instants == 1:
+    14                                                               # print(f"{i} has one instant")
+    15         3     904771.0 301590.3      0.0                      single_timestamp = traj_resampled.timestamps()[0].replace(tzinfo=None).replace(second=0, microsecond=0)
+    16         3      25073.0   8357.7      0.0                      index = time_ranges.index(single_timestamp) - begin_frame
+    17         3       8153.0   2717.7      0.0                      matrix[i][index] = traj.values()[0].wkt
+    18                                                           
+    19      3995    1006758.0    252.0      0.0                  elif num_instants >= 2:
+    20                                                               # traj_resampled = traj.temporal_sample(start=time_ranges[0],duration= GRANULARITY)
+    21                                                               
+    22      3995 1169740340.0 292801.1      2.8                      start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None).replace(second=0, microsecond=0) ) - begin_frame
+    23      3995  826028286.0 206765.5      2.0                      end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None).replace(second=0, microsecond=0) ) - begin_frame
+    24                                                       
+    25      3995        4e+10    1e+07     94.6                      trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
+    26      3995   98232121.0  24588.8      0.2                      matrix[i, start_index:end_index+1] = trajectory_array
+    27                                                   
+    28         3        907.0    302.3      0.0              except:
+    29         3       2272.0    757.3      0.0                  continue
+    30                                           
+    31                                           
+    32                                               # db.close()
+    33                                               # pymeos_finalize()
+    34         1       3543.0   3543.0      0.0      total_time = time.time() - now
+    35         1        949.0    949.0      0.0      frames_for_30_fps= 30 * total_time
+    36         1     177371.0 177371.0      0.0      print(f"Matrix {begin_frame} created in {total_time} seconds, {frames_for_30_fps} frames for 30 fps animation.")
+    37                                               # logs += f"time to create and fill the matrix {begin_frame}: {total_time} seconds\n"

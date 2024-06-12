@@ -99,6 +99,7 @@ class Database_connector:
             ids_str = ', '.join(map(str, ids_list))
           
             query = f"""
+                    WITH trajectories as (
                     SELECT 
                         atStbox(
                             a.{self.tpoint_column_name}::tgeompoint,
@@ -110,9 +111,14 @@ class Database_connector:
                                 ),
                                 tstzspan('[{pstart}, {pend}]')
                             )
-                        )
+                        ) as trajectory
                     FROM public.{self.table_name} as a 
-                    WHERE a.{self.id_column_name} in ({ids_str});
+                    WHERE a.{self.id_column_name} in ({ids_str}))
+
+                    SELECT tsample(trajectory, INTERVAL '1 minute', TIMESTAMP '2023-06-01 00:00:00')  AS resampled_trajectory
+                        FROM 
+                            trajectories ;
+ 
                     """
             self.cursor.execute(query)
             # print(query)
@@ -198,7 +204,7 @@ if not os.path.exists(file_name):
         # print(p_start, p_end, x_min, y_min, x_max, y_max)
         now_db = time.time()
         rows = db.get_subset_of_tpoints(p_start, p_end, x_min, y_min, x_max, y_max)    
-        logs += f"Time to fetch subset of tpoints: {time.time() - now_db} seconds\n"
+        logs += f"Time to fetch the resampled tpoints: {time.time() - now_db} seconds\n"
                 
         empty_point_wkt = Point().wkt  # "POINT EMPTY"
         matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
@@ -209,21 +215,13 @@ if not os.path.exists(file_name):
         for i in range(len(rows)):
             if rows[i][0] is not None:
                 try:
-                    traj = rows[i][0]
-                    num_instants = traj.num_instants()
-                    if num_instants == 1:
-                        single_timestamp = traj.timestamps()[0].replace(tzinfo=None).replace(second=0, microsecond=0)
-                        index = time_ranges.index(single_timestamp) - begin_frame
-                        matrix[i][index] = traj.values()[0].wkt
-                    
-                    elif num_instants >= 2:
-                        traj_resampled = traj.temporal_sample(start=time_ranges[0],duration= GRANULARITY)
-                        
-                        start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None).replace(second=0, microsecond=0) ) - begin_frame
-                        end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None).replace(second=0, microsecond=0) ) - begin_frame
-                
-                        trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
-                        matrix[i, start_index:end_index+1] = trajectory_array
+                    traj_resampled = rows[i][0]
+                   
+                    start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None).replace(second=0, microsecond=0) ) - begin_frame
+                    end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None).replace(second=0, microsecond=0) ) - begin_frame
+            
+                    trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
+                    matrix[i, start_index:end_index+1] = trajectory_array
             
                 except:
                     continue
