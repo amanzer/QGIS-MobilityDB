@@ -37,9 +37,6 @@ import time
 logs = ""
 now = time.time()
 
-FPS_DEQUEUE_SIZE = 5 # Length of the dequeue to calculate the average FPS
-TIME_DELTA_DEQUEUE_SIZE =  10 # Length of the dequeue to keep the keys to keep in the buffer
-
 
 args = sys.argv[1:]
 logs += f"Args: {args}\n"
@@ -99,7 +96,6 @@ class Database_connector:
             ids_str = ', '.join(map(str, ids_list))
           
             query = f"""
-                    WITH trajectories as (
                     SELECT 
                         atStbox(
                             a.{self.tpoint_column_name}::tgeompoint,
@@ -111,14 +107,9 @@ class Database_connector:
                                 ),
                                 tstzspan('[{pstart}, {pend}]')
                             )
-                        ) as trajectory
+                        )
                     FROM public.{self.table_name} as a 
-                    WHERE a.{self.id_column_name} in ({ids_str}))
-
-                    SELECT tsample(trajectory, INTERVAL '1 {args[9]}', TIMESTAMP '2023-06-01 00:00:00')  AS resampled_trajectory
-                        FROM 
-                            trajectories ;
- 
+                    WHERE a.{self.id_column_name} in ({ids_str});
                     """
             self.cursor.execute(query)
             # print(query)
@@ -126,30 +117,6 @@ class Database_connector:
             return rows
         except Exception as e:
             # print(e)
-            pass
-
-
-    def get_min_timestamp(self):
-        """
-        Returns the min timestamp of the tpoints columns.
-
-        """
-        try:
-            
-            self.cursor.execute(f"SELECT MIN(startTimestamp({self.tpoint_column_name})) AS earliest_timestamp FROM public.{self.table_name};")
-            return self.cursor.fetchone()[0]
-        except Exception as e:
-            pass
-
-    def get_max_timestamp(self):
-        """
-        Returns the max timestamp of the tpoints columns.
-
-        """
-        try:
-            self.cursor.execute(f"SELECT MAX(endTimestamp({self.tpoint_column_name})) AS latest_timestamp FROM public.{self.table_name};")
-            return self.cursor.fetchone()[0]
-        except Exception as e:
             pass
 
 
@@ -162,7 +129,7 @@ class Database_connector:
 
 
 MATRIX_DIRECTORY_PATH = "/home/ali/matrices"
-file_name = f"/home/ali/matrices/matrix_{begin_frame}.npy"
+file_name = f"{args[10]}/matrix_{begin_frame}.npy"
 
 
   
@@ -204,7 +171,7 @@ if not os.path.exists(file_name):
         # print(p_start, p_end, x_min, y_min, x_max, y_max)
         now_db = time.time()
         rows = db.get_subset_of_tpoints(p_start, p_end, x_min, y_min, x_max, y_max)    
-        logs += f"Time to fetch the resampled tpoints: {time.time() - now_db} seconds\n"
+        logs += f"Time to fetch subset of tpoints: {time.time() - now_db} seconds\n"
                 
         empty_point_wkt = Point().wkt  # "POINT EMPTY"
         matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
@@ -213,18 +180,28 @@ if not os.path.exists(file_name):
         now = time.time()
 
         for i in range(len(rows)):
-            if rows[i][0] is not None:
-                try:
-                    traj_resampled = rows[i][0]
-                   
-                    start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None).replace(second=0, microsecond=0) ) - begin_frame
-                    end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None).replace(second=0, microsecond=0) ) - begin_frame
+            try:
+                traj = rows[i][0]
+                traj = traj.temporal_precision(GRANULARITY) 
+                num_instants = traj.num_instants()
+                if num_instants == 0:
+                    continue
+                elif num_instants == 1:
+                    single_timestamp = traj.timestamps()[0].replace(tzinfo=None)
+                    index = time_ranges.index(single_timestamp) - begin_frame
+                    matrix[i][index] = traj.values()[0].wkt
+                
+                elif num_instants >= 2:
+                    traj_resampled = traj.temporal_sample(start=time_ranges[0],duration= GRANULARITY)
+                    
+                    start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - begin_frame
+                    end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - begin_frame
             
                     trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
                     matrix[i, start_index:end_index+1] = trajectory_array
-            
-                except:
-                    continue
+        
+            except:
+                continue
         
         np.save(file_name, matrix)
         
