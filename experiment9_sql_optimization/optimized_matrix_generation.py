@@ -204,8 +204,8 @@ if not os.path.exists(file_name):
 
                     start_index = rows[i][0] - begin_frame
                     end_index = rows[i][1] - begin_frame
-                    values = [point.wkt for point in traj_resampled.values()]
-                    matrix[i, start_index:end_index+1] = np.array(values)
+                    values = np.array([point.wkt for point in traj_resampled.values()])
+                    matrix[i, start_index:end_index+1] = values
             
                 except:
                     continue
