@@ -37,20 +37,20 @@ TIME_DELTA_DEQUEUE_SIZE =  4 # Length of the dequeue to keep the keys to keep in
 
 
 PERCENTAGE_OF_OBJECTS = 1 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 60  # Number of frames associated to one Time delta
+TIME_DELTA_SIZE = 5000  # Number of frames associated to one Time delta
 
 SRID = 4326
 FPS = 30
 
 DIRECTORY_PATH = os.getcwd()
-MATRIX_DIRECTORY_PATH = f'{DIRECTORY_PATH}/matrices'
+MATRIX_DIRECTORY_PATH = f'{DIRECTORY_PATH}/matrices_simulation'
 
 # AIS Danish maritime dataset
 DATABASE_NAME = "mobilitydb"
 TPOINT_TABLE_NAME = "PyMEOS_demo"
 TPOINT_ID_COLUMN_NAME = "MMSI"
 TPOINT_COLUMN_NAME = "trajectory"
-GRANULARITY = Time_granularity.MINUTE
+GRANULARITY = Time_granularity.SECOND
 
 # LIMA PERU drivers dataset
 
@@ -255,14 +255,15 @@ class Time_deltas_handler:
         - t delta key 
         """
 
+
         if self.previous_frame - frame_number <= 0:
             self.direction = 1 # Forward
-            if frame_number >= self.total_frames: # Reached the end of the animation, pause
-                self.qviz.pause()
+            if frame_number == 4999: # Reached the end of the animation, pause
+                self.qviz.play_backwards()
         else:
             self.direction = 0
-            if frame_number <= 0: # Reached the beginning of the animation, pause
-                self.qviz.pause()
+            if frame_number == 1: # Reached the beginning of the animation, pause
+                self.qviz.play_forward()
             
         self.previous_frame = frame_number
 
@@ -626,6 +627,11 @@ class QVIZ:
     def get_canvas_extent(self):
         return self.extent
     
+    def play_forward(self):
+        self.temporalController.playForward()
+
+    def play_backwards(self):
+        self.temporalController.playBackward()
 
     def pause(self):
         """
