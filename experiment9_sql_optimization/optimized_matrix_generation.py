@@ -84,19 +84,24 @@ class Database_connector:
             pass
 
   
-    def get_subset_of_tpoints(self, pstart, pend, xmin, ymin, xmax, ymax):
+    def get_subset_of_tpoints(self, pstart, pend, xmin, ymin, xmax, ymax, time_granularity, start_date):
         """
         For each object in the ids_list :
             Fetch the subset of the associated Tpoints between the start and end timestamps
             contained in the STBOX defined by the xmin, ymin, xmax, ymax.
         """
+        
         try:
-           
             ids_list = [ f"'{id[0]}'"  for id in self.ids_list]
             ids_str = ', '.join(map(str, ids_list))
-          
-            query = f"""
-                     WITH trajectories as (
+
+            if time_granularity == "SECOND":
+                time_value = 1
+            elif time_granularity == "MINUTE":
+                time_value = 60
+            
+            # return [self.tpoint_column_name, self.id_column_name, ids_str, xmin, ymin, xmax, ymax, pstart, pend, time_granularity, start_date, time_value]
+            query = f"""WITH trajectories as (
                     SELECT 
                         atStbox(
                             a.{self.tpoint_column_name}::tgeompoint,
@@ -104,26 +109,33 @@ class Database_connector:
                                 ST_MakeEnvelope(
                                     {xmin}, {ymin}, -- xmin, ymin
                                     {xmax}, {ymax}, -- xmax, ymax
-                                    4326 -- SRID
+                                    0 -- SRID
                                 ),
                                 tstzspan('[{pstart}, {pend}]')
                             )
                         ) as trajectory
                     FROM public.{self.table_name} as a 
-                    WHERE a.{self.id_column_name} in ({ids_str}))
+                    WHERE a.{self.id_column_name} in ({ids_str})),
 
-                    SELECT tsample(trajectory, INTERVAL '1 {args[9]}', TIMESTAMP '{args[7]}')  AS resampled_trajectory
+                    resampled as (
+
+                    SELECT tsample(traj.trajectory, INTERVAL '1 {time_granularity}', TIMESTAMP '{start_date}')  AS resampled_trajectory
                         FROM 
-                            trajectories ;
- 
-                    """
+                            trajectories as traj)
+				
+                    SELECT
+                            EXTRACT(EPOCH FROM (startTimestamp(rs.resampled_trajectory) - '{start_date}'::timestamp))::integer / {time_value} AS start_index ,
+                            EXTRACT(EPOCH FROM (endTimestamp(rs.resampled_trajectory) - '{start_date}'::timestamp))::integer / {time_value} AS end_index,
+                            rs.resampled_trajectory
+                    FROM resampled as rs ;"""
+        
             self.cursor.execute(query)
-            # print(query)
+       
             rows = self.cursor.fetchall()
             return rows
         except Exception as e:
-            # print(e)
-            pass
+            print(query)
+            print(e)
 
 
     def close(self):
@@ -176,7 +188,7 @@ if not os.path.exists(file_name):
         p_end = timestamps[end_frame]
         # print(p_start, p_end, x_min, y_min, x_max, y_max)
         now_db = time.time()
-        rows = db.get_subset_of_tpoints(p_start, p_end, x_min, y_min, x_max, y_max)    
+        rows = db.get_subset_of_tpoints(p_start, p_end, x_min, y_min, x_max, y_max, args[9], start_date)    
         logs += f"Time to fetch subset of tpoints: {time.time() - now_db} seconds\n"
                 
         empty_point_wkt = Point().wkt  # "POINT EMPTY"
@@ -186,15 +198,14 @@ if not os.path.exists(file_name):
         now = time.time()
 
         for i in range(len(rows)):
-            if rows[i][0] is not None:
+            if rows[i][2] is not None:
                 try:
-                    traj_resampled = rows[i][0]
-                   
-                    start_index = time_ranges.index( traj_resampled.start_timestamp().replace(tzinfo=None).replace(second=0, microsecond=0) ) - begin_frame
-                    end_index = time_ranges.index( traj_resampled.end_timestamp().replace(tzinfo=None).replace(second=0, microsecond=0) ) - begin_frame
-            
-                    trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
-                    matrix[i, start_index:end_index+1] = trajectory_array
+                    traj_resampled = rows[i][2]
+
+                    start_index = rows[i][0] - begin_frame
+                    end_index = rows[i][1] - begin_frame
+                    values = [point.wkt for point in traj_resampled.values()]
+                    matrix[i, start_index:end_index+1] = np.array(values)
             
                 except:
                     continue
