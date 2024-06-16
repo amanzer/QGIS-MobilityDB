@@ -109,7 +109,7 @@ class Database_connector:
                                 ST_MakeEnvelope(
                                     {xmin}, {ymin}, -- xmin, ymin
                                     {xmax}, {ymax}, -- xmax, ymax
-                                    0 -- SRID
+                                    4326 -- SRID
                                 ),
                                 tstzspan('[{pstart}, {pend}]')
                             )
