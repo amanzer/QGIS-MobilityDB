@@ -123,7 +123,7 @@ TIME_DELTA_DEQUEUE_SIZE =  4 # Length of the dequeue to keep the keys to keep in
 
 
 PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 60  # Number of frames associated to one Time delta
+TIME_DELTA_SIZE = 240  # Number of frames associated to one Time delta
 
 SRID = 4326
 FPS = 30
@@ -550,7 +550,7 @@ class Matrix_generation_thread2(QgsTask):
             
             result_queue = multiprocessing.Queue()
             self.log(f"arguments : begin_frame : {self.begin_frame}, end_frame : {self.end_frame}, TIME_DELTA_SIZE : {TIME_DELTA_SIZE}, PERCENTAGE_OF_OBJECTS : {PERCENTAGE_OF_OBJECTS}, -180, -90, 180, 90, len(self.timestamps), 'SECOND',{len(self.db.ids_list)}")
-            process = multiprocessing.Process(target=create_matrix, args=(result_queue, self.begin_frame, self.end_frame, TIME_DELTA_SIZE, PERCENTAGE_OF_OBJECTS, -180, -90, 180, 90, self.timestamps,len(self.timestamps), 'SECOND',self.db.ids_list))
+            process = multiprocessing.Process(target=create_matrix, args=(result_queue, self.begin_frame, self.end_frame, TIME_DELTA_SIZE, PERCENTAGE_OF_OBJECTS, -180, -90, 180, 90, self.timestamps,len(self.timestamps), GRANULARITY.name,self.db.ids_list))
             process.start()
             self.log(f"Process started")
             # Retrieve the result from the queue
