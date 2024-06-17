@@ -31,7 +31,9 @@ def create_matrix(result_queue, begin_frame, end_frame, TIME_DELTA_SIZE, PERCENT
     p_start = timestamps[begin_frame]
     p_end = timestamps[end_frame]
     start_date = timestamps[0]
-  
+    
+    logs = ""
+
     connection_params = {
             "host": "localhost",
             "port": 5432,
@@ -51,50 +53,69 @@ def create_matrix(result_queue, begin_frame, end_frame, TIME_DELTA_SIZE, PERCENT
 
    
   
+    if GRANULARITY == "SECOND":
+        time_value = 1
+    elif GRANULARITY == "MINUTE":
+        time_value = 60
+    print("ok2")
     # return [self.tpoint_column_name, self.id_column_name, ids_str, xmin, ymin, xmax, ymax, pstart, pend, time_granularity, start_date, time_value]
-    query = f"""SELECT 
-                        atStbox(
-                            a.{tpoint_column_name}::tgeompoint,
-                            stbox(
-                                ST_MakeEnvelope(
-                                    {x_min}, {y_min}, -- xmin, ymin
-                                    {x_max}, {y_max}, -- xmax, ymax
-                                    4326 -- SRID
-                                ),
-                                tstzspan('[{p_start}, {p_end}]')
-                            )
-                        )
-                    FROM public.{table_name} as a 
-                    WHERE a.{id_column_name} in ({ids_str});"""
+    query = f"""WITH trajectories as (
+            SELECT 
+                atStbox(
+                    a.{tpoint_column_name}::tgeompoint,
+                    stbox(
+                        ST_MakeEnvelope(
+                            {x_min}, {y_min}, -- xmin, ymin
+                            {x_max}, {y_max}, -- xmax, ymax
+                            4326 -- SRID
+                        ),
+                        tstzspan('[{p_start}, {p_end}]')
+                    )
+                ) as trajectory
+            FROM public.{table_name} as a 
+            WHERE a.{id_column_name} in ({ids_str})),
+
+            resampled as (
+
+            SELECT tsample(traj.trajectory, INTERVAL '1 {GRANULARITY}', TIMESTAMP '{start_date}')  AS resampled_trajectory
+                FROM 
+                    trajectories as traj)
+        
+            SELECT
+                    EXTRACT(EPOCH FROM (startTimestamp(rs.resampled_trajectory) - '{start_date}'::timestamp))::integer / {time_value} AS start_index ,
+                    EXTRACT(EPOCH FROM (endTimestamp(rs.resampled_trajectory) - '{start_date}'::timestamp))::integer / {time_value} AS end_index,
+                    rs.resampled_trajectory
+            FROM resampled as rs ;"""
 
     cursor.execute(query)
-    print("ok3 rows")
+    logs += f"query : {query}\n"
     rows = cursor.fetchall()
     cursor.close()
     connection.close()
-       
+    logs += f"Number of rows : {len(rows)}\n"
     empty_point_wkt = Point().wkt  # "POINT EMPTY"
     matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
     
-
     for i in range(len(rows)):
-        try:
-            if rows[i][0] is None:
+        if rows[i][2] is not None:
+            try:
+                traj_resampled = rows[i][2]
+
+                start_index = rows[i][0] - begin_frame
+                end_index = rows[i][1] - begin_frame
+                values = np.array([point.wkt for point in traj_resampled.values()])
+                matrix[i, start_index:end_index+1] = values
+        
+            except:
                 continue
-            else:
-                traj = rows[i][0]
-                traj_resampled = traj.temporal_sample(start=timestamps[0],duration= GRANULARITY)
-                
-                start_index = timestamps.index( traj_resampled.start_timestamp().replace(tzinfo=None) ) - begin_frame
-                end_index = timestamps.index( traj_resampled.end_timestamp().replace(tzinfo=None) ) - begin_frame
-        
-                trajectory_array = np.array([point.wkt for point in traj_resampled.values()])
-                matrix[i, start_index:end_index+1] = trajectory_array
-        
-        except:
-            continue
+
+    logs += f"Matrix shape : {matrix.shape}\n"
+    logs += f"Number of non empty points : {np.count_nonzero(matrix != 'POINT EMPTY')}\n"
+
         
     result_queue.put(matrix)
+    result_queue.put(logs)
+    
 
 class Time_granularity(Enum):
     # MILLISECOND = {"timedelta" : timedelta(milliseconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Milliseconds, "name" : "MILLISECOND"}
@@ -189,8 +210,20 @@ class Time_deltas_handler:
         task_matrix_gen.taskCompleted.connect(self.initiate_animation)
         self.task_manager.addTask(task_matrix_gen)     
 
-        # self.task_manager.allTasksFinished.connect(self.update_vlayer_features)
+        # self.task_manager.allTasksFinished.connect(self.play)
     
+
+    def play(self):
+        """
+        Play the animation
+        """
+        if self.direction == 1:
+            self.qviz.temporalController.playForward()
+        else:
+            self.qviz.temporalController.playBackward()
+
+        
+
     def initiate_animation(self):
         """
         Once the first batch is fetched, make the request for the second and play the animation for this first time delta
@@ -364,8 +397,8 @@ class Time_deltas_handler:
                     
                     self.update_vlayer_features()
                     self.changed_key = True
-                    if self.task_manager.countActiveTasks() != 0:
-                        self.qviz.pause()
+                    # if self.task_manager.countActiveTasks() != 0:
+                    #     self.qviz.pause()
                     
             else:
                 self.log(f"                                          FETCH NEXT BATCH  - backward - delta before : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
@@ -380,8 +413,8 @@ class Time_deltas_handler:
                     self.update_cache(self.current_time_delta_key)
                     self.fetch_next_data(self.current_time_delta_key-TIME_DELTA_SIZE)
                     self.changed_key = True
-                    if self.task_manager.countActiveTasks() != 0:
-                        self.qviz.pause()
+                    # if self.task_manager.countActiveTasks() != 0:
+                    #     self.qviz.pause()
         else:
             if self.changed_key:
                 if frame_number < self.current_time_delta_key:
@@ -535,16 +568,18 @@ class Matrix_generation_thread2(QgsTask):
             now = time.time()
             
             result_queue = multiprocessing.Queue()
-            self.log(f"arguments : begin_frame : {self.begin_frame}, end_frame : {self.end_frame}, TIME_DELTA_SIZE : {TIME_DELTA_SIZE}, PERCENTAGE_OF_OBJECTS : {PERCENTAGE_OF_OBJECTS}, -180, -90, 180, 90, len(self.timestamps), 'SECOND',{len(self.db.ids_list)}")
+            self.log(f"arguments : begin_frame : {self.begin_frame}, end_frame : {self.end_frame}, TIME_DELTA_SIZE : {TIME_DELTA_SIZE}, PERCENTAGE_OF_OBJECTS : {PERCENTAGE_OF_OBJECTS}, -180, -90, 180, 90, len(self.timestamps), GRANULARITY.name,{len(self.db.ids_list)}")
             process = multiprocessing.Process(target=create_matrix, args=(result_queue, self.begin_frame, self.end_frame, TIME_DELTA_SIZE, PERCENTAGE_OF_OBJECTS, -180, -90, 180, 90, self.timestamps,len(self.timestamps), GRANULARITY.name,self.db.ids_list))
             process.start()
             self.log(f"Process started")
             # Retrieve the result from the queue
             result_matrix = result_queue.get()
+            logs= result_queue.get()
+            result_queue.close()
             process.join()  # Wait for the process to complete
     
             
-            print("Retrieved matrix shape:", result_matrix.shape)
+            self.log(f"Retrieved matrix shape: {result_matrix.shape}, logs {logs}" )
             TIME_total = time.time() - now
             self.log(f"file created in {TIME_total} s, frames for 30 FPS animation at this rate : { TIME_total * 30}" )
             self.result_params = {
@@ -886,6 +921,7 @@ class QVIZ:
     def get_canvas_extent(self):
         return self.extent
     
+
 
     def pause(self):
         """
