@@ -27,11 +27,21 @@ import logging
 
 
 # Enum classes
+
+
 class Time_granularity(Enum):
     # MILLISECOND = {"timedelta" : timedelta(milliseconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Milliseconds, "name" : "MILLISECOND"}
-    SECOND = {"timedelta" : timedelta(seconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Seconds, "name" : "SECOND"}
-    MINUTE = {"timedelta" : timedelta(minutes=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Minutes, "name" : "MINUTE"}
+    SECOND = {"timedelta" : timedelta(seconds=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Seconds, "name" : "SECOND", "steps" : 1}
+    MINUTE = {"timedelta" : timedelta(minutes=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Minutes, "name" : "MINUTE", "steps" : 1}
     # HOUR = {"timedelta" : timedelta(hours=1), "qgs_unit" : QgsUnitTypes.TemporalUnit.Hours, "name" : "HOUR"}
+
+    @classmethod
+    def set_time_step(cls, steps):
+        Time_granularity.SECOND.value["timedelta"] = timedelta(seconds=steps)
+        Time_granularity.SECOND.value["steps"] = steps
+        Time_granularity.MINUTE.value["timedelta"] = timedelta(minutes=steps)
+        Time_granularity.MINUTE.value["steps"] = steps
+        return cls
 
 # class Direction(Enum):
 #     FORWARD = 1
@@ -39,27 +49,27 @@ class Time_granularity(Enum):
 
 # Global parameters
 
-TIME_DELTA_DEQUEUE_SIZE =  3 # Length of the dequeue to keep the keys to keep in the buffer
+TIME_DELTA_DEQUEUE_SIZE =  4 # Length of the dequeue to keep the keys to keep in the buffer
 PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 240  # Number of frames associated to one Time delta
-FPS = 30
+TIME_DELTA_SIZE = 60  # Number of frames associated to one Time delta
+FPS = 100
 
 
 # TODO : Use Qgis data provider to access database and tables
 SRID = 4326
 ########## AIS Danish maritime dataset ##########
-DATABASE_NAME = "mobilitydb"
-TPOINT_TABLE_NAME = "PyMEOS_demo"
-TPOINT_ID_COLUMN_NAME = "MMSI"
-TPOINT_COLUMN_NAME = "trajectory"
-GRANULARITY = Time_granularity.MINUTE
+# DATABASE_NAME = "mobilitydb"
+# TPOINT_TABLE_NAME = "PyMEOS_demo"
+# TPOINT_ID_COLUMN_NAME = "MMSI"
+# TPOINT_COLUMN_NAME = "trajectory"
+# GRANULARITY = Time_granularity.MINUTE
 
 ########## LIMA PERU drivers dataset ##########
-# DATABASE_NAME = "lima_demo"
-# TPOINT_TABLE_NAME = "driver_paths"
-# TPOINT_ID_COLUMN_NAME = "driver_id"
-# TPOINT_COLUMN_NAME = "trajectory"
-# GRANULARITY = Time_granularity.SECOND
+DATABASE_NAME = "lima_demo"
+TPOINT_TABLE_NAME = "driver_paths"
+TPOINT_ID_COLUMN_NAME = "driver_id"
+TPOINT_COLUMN_NAME = "trajectory"
+GRANULARITY = Time_granularity.set_time_step(5).SECOND
 
 
 
@@ -174,7 +184,7 @@ class Time_deltas_handler:
         """
         
         time_range = QgsDateTimeRange(self.timestamps[0], self.timestamps[-1])
-        interval = QgsInterval(1, GRANULARITY.value["qgs_unit"])
+        interval = QgsInterval(GRANULARITY.value["steps"], GRANULARITY.value["qgs_unit"])
         frame_rate = FPS
         
         self.qviz.set_temporal_controller_extent(time_range) 
@@ -246,12 +256,12 @@ class Time_deltas_handler:
 
         if frame_number % TIME_DELTA_SIZE == 0:
             if self.direction == 1:
-                log(f"------- FETCH NEXT BATCH  - forward - delta before : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
+                # log(f"------- FETCH NEXT BATCH  - forward - delta before : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
                 if self.current_time_delta_end + 1  != self.total_frames:
                     # self.qviz.pause()
                     self.current_time_delta_key = frame_number
                     self.current_time_delta_end = (self.current_time_delta_key + TIME_DELTA_SIZE) - 1
-                    log(f"------- FETCH NEXT BATCH  - forward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
+                    # log(f"------- FETCH NEXT BATCH  - forward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
                     self.update_cache(self.current_time_delta_key)
                     self.fetch_next_data(self.current_time_delta_key+TIME_DELTA_SIZE)
                     # if self.task_manager.countActiveTasks() != 0:
@@ -263,14 +273,14 @@ class Time_deltas_handler:
                     #     self.qviz.pause()
                     
             else:
-                log(f"------- FETCH NEXT BATCH  - backward - delta before : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
+                # log(f"------- FETCH NEXT BATCH  - backward - delta before : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
             
                 self.update_vlayer_features()  
                 if self.current_time_delta_key != 0:
                     # self.qviz.pause()
                     self.current_time_delta_key = self.current_time_delta_key - TIME_DELTA_SIZE
                     self.current_time_delta_end = frame_number-1
-                    log(f"------- FETCH NEXT BATCH  - backward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
+                    # log(f"------- FETCH NEXT BATCH  - backward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
                     
                     self.update_cache(self.current_time_delta_key)
                     self.fetch_next_data(self.current_time_delta_key-TIME_DELTA_SIZE)
@@ -338,10 +348,10 @@ class Time_deltas_handler:
         connection = MobilityDB.connect(**connection_params)    
         cursor = connection.cursor()
     
-        if GRANULARITY == "SECOND": # TODO : handle granularity of different time steps(5 seconds etc)
-            time_value = 1
-        elif GRANULARITY == "MINUTE":
-            time_value = 60
+        if GRANULARITY.value["name"] == "SECOND": # TODO : handle granularity of different time steps(5 seconds etc)
+            time_value = 1 * GRANULARITY.value["steps"]
+        elif GRANULARITY.value["name"] == "MINUTE":
+            time_value = 60 * GRANULARITY.value["steps"]
 
         query = f"""WITH trajectories as (
                 SELECT 
@@ -361,7 +371,7 @@ class Time_deltas_handler:
 
                 resampled as (
 
-                SELECT tsample(traj.trajectory, INTERVAL '1 {GRANULARITY}', TIMESTAMP '{start_date}')  AS resampled_trajectory
+                SELECT tsample(traj.trajectory, INTERVAL '{GRANULARITY.value["steps"]} {GRANULARITY.value["name"]}', TIMESTAMP '{start_date}')  AS resampled_trajectory
                     FROM 
                         trajectories as traj)
             
@@ -545,10 +555,10 @@ class Matrix_generation_thread(QgsTask):
 
             result_queue = multiprocessing.Queue()
             
-            log(f"arguments : begin_frame : {self.begin_frame}, end_frame : {self.end_frame}, TIME_DELTA_SIZE : {TIME_DELTA_SIZE}, PERCENTAGE_OF_OBJECTS : {PERCENTAGE_OF_OBJECTS}, {self.extent}, len timestamps :{len(self.timestamps)}, granularity : {GRANULARITY.name},{len(self.objects_id_str)}")
-            process = multiprocessing.Process(target=self.create_matrix, args=(result_queue, self.begin_frame, self.end_frame, TIME_DELTA_SIZE, self.extent, self.timestamps, connection_params, TPOINT_TABLE_NAME, TPOINT_ID_COLUMN_NAME, TPOINT_COLUMN_NAME, GRANULARITY.name, self.objects_id_str))
+            # log(f"arguments : begin_frame : {self.begin_frame}, end_frame : {self.end_frame}, TIME_DELTA_SIZE : {TIME_DELTA_SIZE}, PERCENTAGE_OF_OBJECTS : {PERCENTAGE_OF_OBJECTS}, {self.extent}, len timestamps :{len(self.timestamps)}, granularity : {GRANULARITY.value},{len(self.objects_id_str)}")
+            process = multiprocessing.Process(target=self.create_matrix, args=(result_queue, self.begin_frame, self.end_frame, TIME_DELTA_SIZE, self.extent, self.timestamps, connection_params, TPOINT_TABLE_NAME, TPOINT_ID_COLUMN_NAME, TPOINT_COLUMN_NAME, GRANULARITY, self.objects_id_str))
             process.start()
-            log(f"Process started")
+            # log(f"Process started")
            
             
             # Retrieve the result from the queue
@@ -557,9 +567,9 @@ class Matrix_generation_thread(QgsTask):
             result_queue.close()
             process.join()  # Wait for the process to complete
             
-            log(f"Retrieved matrix shape: {result_matrix.shape}, logs {logs}" )
+            # log(f"Retrieved matrix shape: {result_matrix.shape}, logs {logs}" )
             TIME_total = time.time() - now
-            log(f"multiprocess terminated in {TIME_total} s, frames for 30 FPS animation at this rate : { TIME_total * 30}" )
+            # log(f"multiprocess terminated in {TIME_total} s, frames for 30 FPS animation at this rate : { TIME_total * 30}" )
             self.result_params = {
                 'key': self.begin_frame,
                 'matrix' : result_matrix,
