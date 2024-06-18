@@ -50,26 +50,26 @@ class Time_granularity(Enum):
 # Global parameters
 
 TIME_DELTA_DEQUEUE_SIZE =  4 # Length of the dequeue to keep the keys to keep in the buffer
-PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 60  # Number of frames associated to one Time delta
+PERCENTAGE_OF_OBJECTS = 0.15 # To not overload the memory, we only take a percentage of the ships in the database
+TIME_DELTA_SIZE = 30  # Number of frames associated to one Time delta
 FPS = 100
 
 
 # TODO : Use Qgis data provider to access database and tables
 SRID = 4326
 ########## AIS Danish maritime dataset ##########
-# DATABASE_NAME = "mobilitydb"
-# TPOINT_TABLE_NAME = "PyMEOS_demo"
-# TPOINT_ID_COLUMN_NAME = "MMSI"
-# TPOINT_COLUMN_NAME = "trajectory"
-# GRANULARITY = Time_granularity.set_time_step(1).MINUTE
+DATABASE_NAME = "mobilitydb"
+TPOINT_TABLE_NAME = "PyMEOS_demo"
+TPOINT_ID_COLUMN_NAME = "MMSI"
+TPOINT_COLUMN_NAME = "trajectory"
+GRANULARITY = Time_granularity.set_time_step(1).MINUTE
 
 ########## LIMA PERU drivers dataset ##########
-DATABASE_NAME = "lima_demo"
-TPOINT_TABLE_NAME = "driver_paths"
-TPOINT_ID_COLUMN_NAME = "driver_id"
-TPOINT_COLUMN_NAME = "trajectory"
-GRANULARITY = Time_granularity.set_time_step(5).SECOND
+# DATABASE_NAME = "lima_demo"
+# TPOINT_TABLE_NAME = "driver_paths"
+# TPOINT_ID_COLUMN_NAME = "driver_id"
+# TPOINT_COLUMN_NAME = "trajectory"
+# GRANULARITY = Time_granularity.set_time_step(5).SECOND
 
 
 
@@ -569,7 +569,7 @@ class Matrix_generation_thread(QgsTask):
             
             # log(f"Retrieved matrix shape: {result_matrix.shape}, logs {logs}" )
             TIME_total = time.time() - now
-            # log(f"multiprocess terminated in {TIME_total} s, frames for 30 FPS animation at this rate : { TIME_total * 30}" )
+            log(f"multiprocess terminated in {TIME_total} s" )
             self.result_params = {
                 'key': self.begin_frame,
                 'matrix' : result_matrix,
