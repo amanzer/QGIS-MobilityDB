@@ -62,7 +62,7 @@ SRID = 4326
 # TPOINT_TABLE_NAME = "PyMEOS_demo"
 # TPOINT_ID_COLUMN_NAME = "MMSI"
 # TPOINT_COLUMN_NAME = "trajectory"
-# GRANULARITY = Time_granularity.MINUTE
+# GRANULARITY = Time_granularity.set_time_step(1).MINUTE
 
 ########## LIMA PERU drivers dataset ##########
 DATABASE_NAME = "lima_demo"
