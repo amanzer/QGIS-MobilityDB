@@ -78,9 +78,9 @@ Now we are ready to construct ship trajectories out of their individual observat
 ```SQL
 CREATE TABLE Ships(MMSI, Trip, SOG, COG) AS 
 SELECT MMSI, 
-  tgeompoint_seq(array_agg(tgeompoint_inst(ST_Transform(Geom, 25832), T) ORDER BY T)), 
-  tfloat_seq(array_agg(tfloat_inst(SOG, T) ORDER BY T) FILTER (WHERE SOG IS NOT NULL)), 
-  tfloat_seq(array_agg(tfloat_inst(COG, T) ORDER BY T) FILTER (WHERE COG IS NOT NULL)) 
+  tgeompointseq(array_agg(tgeompoint(ST_Transform(Geom, 25832), T) ORDER BY T)), 
+  tfloatseq(array_agg(tfloat(SOG, T) ORDER BY T) FILTER (WHERE SOG IS NOT NULL)), 
+  tfloatseq(array_agg(tfloat(COG, T) ORDER BY T) FILTER (WHERE COG IS NOT NULL)) 
 FROM AISInputFiltered 
 GROUP BY MMSI;
 -- Query returned successfully: 6264 rows affected, 00:52 minutes execution time.

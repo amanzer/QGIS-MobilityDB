@@ -1,22 +1,14 @@
 """
 
-In this implementation of Qviz :
+New additions to the base multiprocessing :
 
-We use python's multiprocessing module to fetch the data from the MobilityDB database in parallel.
-
-Things to measure:
-
-- SQL vs MATRIX
-- ONF
-- Costs of starting threads etc
-
-
-Known issues :
-
--Temporal Controller roller over(from frame 0 to the last frame) is not handled
--User moving the temporal controller tick by himself not handled correctly
-The user can move the tick fast enough to break the time deltas logic, in such
-scenario we should observe the temporalController statechange signal and update
+- Removed datetime attribute by a start and end attributes that no longer needs to be updated in ONF
+- Using vlayer dataprovider, the creation of QGIS features initially is almost intant
+        the bottleneck with previous method: 
+        self.vlayer.startEditing()
+        self.vlayer.addFeatures(qgis_features_list) # Add list of features to vlayer
+        self.vlayer.commitChanges()
+        is that it generates a warning for each feature (qgis cannot create accessible child interface for object)
 
 """
 
@@ -61,19 +53,27 @@ class Time_granularity(Enum):
 # Global parameters
 
 TIME_DELTA_DEQUEUE_SIZE =  4 # Length of the dequeue to keep the keys to keep in the buffer
-PERCENTAGE_OF_OBJECTS = 0.2 # To not overload the memory, we only take a percentage of the ships in the database
+PERCENTAGE_OF_OBJECTS = 1 # To not overload the memory, we only take a percentage of the ships in the database
 TIME_DELTA_SIZE = 60  # Number of frames associated to one Time delta
 FPS = 100
 
 
 # TODO : Use Qgis data provider to access database and tables
 SRID = 4326
+DATA_SRID = 0
 ########## AIS Danish maritime dataset ##########
 DATABASE_NAME = "mobilitydb"
 TPOINT_TABLE_NAME = "PyMEOS_demo"
 TPOINT_ID_COLUMN_NAME = "MMSI"
 TPOINT_COLUMN_NAME = "trajectory"
 GRANULARITY = Time_granularity.set_time_step(1).MINUTE
+
+########## AIS Danish maritime dataset ##########
+# DATABASE_NAME = "DanishAIS"
+# TPOINT_TABLE_NAME = "Ships"
+# TPOINT_ID_COLUMN_NAME = "MMSI"
+# TPOINT_COLUMN_NAME = "trip"
+# GRANULARITY = Time_granularity.set_time_step(1).MINUTE
 
 ########## LIMA PERU drivers dataset ##########
 # DATABASE_NAME = "lima_demo"
@@ -140,8 +140,7 @@ class Time_deltas_handler:
         self.objects_id_str = self.db.get_objects_str()
 
         # Create qgsi features for all objects
-        task_features_gen = Qgis_features_generation_thread(f"Generating Qgis features for all objects","qViz", self.objects_count, self.qviz.vlayer.fields(), self.timestamps[0], self.timestamps[-1], self.set_qgis_features, self.raise_error)
-        self.task_manager.addTask(task_features_gen)
+        self.generate_qgis_features(self.objects_count, self.qviz.vlayer.fields(), self.timestamps[0], self.timestamps[-1])
 
         # Initiate request for first batch
         time_delta_key = 0
@@ -156,6 +155,22 @@ class Time_deltas_handler:
         # self.task_manager.allTasksFinished.connect(self.resume_animation)
     
     # Methods to handle initial setup 
+
+    def generate_qgis_features(self,num_objects, vlayer_fields,  start_date, end_date):
+        features_list =[]
+        start_datetime_obj = QDateTime(start_date)
+        end_datetime_obj = QDateTime(end_date)
+
+
+        for i in range(num_objects):
+            feat = QgsFeature(vlayer_fields)
+            feat.setAttributes([start_datetime_obj, end_datetime_obj])
+            features_list.append(feat)
+        
+        self.qviz.set_qgis_features(features_list)
+        log(f"{num_objects} Qgis features created")
+        
+
 
     def initiate_animation(self):
         """
@@ -177,6 +192,7 @@ class Time_deltas_handler:
         """
         Generate the timestamps associated to the dataset and the granularity selected.
         """
+     
         start_date = self.db.get_min_timestamp()
         end_date = self.db.get_max_timestamp()
         self.total_frames = math.ceil( (end_date - start_date) // GRANULARITY.value["timedelta"] ) + 1
@@ -369,7 +385,7 @@ class Time_deltas_handler:
                             ST_MakeEnvelope(
                                 {x_min}, {y_min}, -- xmin, ymin
                                 {x_max}, {y_max}, -- xmax, ymax
-                                4326 -- SRID
+                                {DATA_SRID} -- SRID
                             ),
                             tstzspan('[{p_start}, {p_end}]')
                         )
@@ -450,78 +466,6 @@ class Time_deltas_handler:
 
 
 
-
-
-
-class Qgis_features_generation_thread(QgsTask):
-    """
-    This thread creates the qgs features for all the objects in the table.
-    """
-
-    def __init__(self, description,project_title, total_objects,vlayer_fields, start_dt, end_dt, finished_fnc, failed_fnc):
-        super(Qgis_features_generation_thread, self).__init__(description, QgsTask.CanCancel)
-        
-        self.project_title = project_title
-        self.total_objects = total_objects
-        self.vlayer_fields = vlayer_fields
-        self.start_dt = start_dt
-        self.end_dt = end_dt    
-
-        self.finished_fnc = finished_fnc
-        self.failed_fnc = failed_fnc
-
-        self.result_params = None
-        self.error_msg = None
-
-
-    def finished(self, result):
-        if result:
-            self.finished_fnc(self.result_params)
-        else:
-            self.failed_fnc(self.error_msg)
-
-
-    def run(self):
-        """
-        Function that is executed in parallel to fetch all the subsets of Tpoints from the MobilityDB database,
-        for the given time delta.
-        """
-        try:
-            # datetime_obj = QDateTime(datetime.now())
-            vlayer_fields = self.vlayer_fields
-
-            empty_point_wkt = Point().wkt  # "POINT EMPTY"
-    
-            qgis_features_list = []
-
-            start_datetime_obj = QDateTime(self.start_dt)
-
-            end_datetime_obj = QDateTime(self.end_dt)
-
-            for i in range(self.total_objects):
-                feat = QgsFeature(vlayer_fields)
-                feat.setAttributes([start_datetime_obj, end_datetime_obj])  # Set its attributes
-
-                # Create geometry from WKT string
-                geom = QgsGeometry.fromWkt(empty_point_wkt)
-                feat.setGeometry(geom)  # Set its geometry
-                qgis_features_list.append(feat)
-
-            log(f"{self.total_objects} Qgis features created")
-
-            self.result_params = {
-                'qgis_features_list': qgis_features_list
-            }
-        except ValueError as e:
-            self.error_msg = str(e)
-            return False
-        return True
-
-
-
-
-
-
 class Matrix_generation_thread(QgsTask):
     """
     This thread creates next time delta's the matrix containing the positions for all objects to show. 
@@ -580,7 +524,7 @@ class Matrix_generation_thread(QgsTask):
             logs= result_queue.get()
             result_queue.close()
             process.join()  # Wait for the process to complete
-            
+            # log(logs)
             # log(f"Retrieved matrix shape: {result_matrix.shape}, logs {logs}" )
             TIME_total = time.time() - now
             log(f"multiprocess terminated in {TIME_total} s" )
@@ -647,8 +591,9 @@ class Database_connector:
 
         """
         try:
-            
-            self.cursor.execute(f"SELECT MIN(startTimestamp({self.tpoint_column_name})) AS earliest_timestamp FROM public.{self.table_name};")
+            query = f"SELECT MIN(startTimestamp({self.tpoint_column_name})) AS earliest_timestamp FROM public.{self.table_name};"
+            self.cursor.execute(query)
+            log(query)
             return self.cursor.fetchone()[0]
         except Exception as e:
             pass
@@ -745,13 +690,6 @@ class QVIZ:
 
     # Setters 
 
-    def set_qgis_features(self, qgis_features_list):
-        self.vlayer.startEditing()
-        self.vlayer.addFeatures(qgis_features_list) # Add list of features to vlayer
-        self.vlayer.commitChanges()
-        iface.vectorLayerTools().stopEditing(self.vlayer)
-
-
     #TODO : Need to define getters for when Temporal Controller state is changed by the user
     def set_temporal_controller_extent(self, time_range):
         if self.temporalController:
@@ -772,6 +710,9 @@ class QVIZ:
         if self.temporalController:
             self.temporalController.setCurrentFrameNumber(frame_number)
 
+    def set_qgis_features(self, features_list):
+        if self.vlayer:
+            self.vlayer.dataProvider().addFeatures(features_list)
 
     def set_fps(self, fps):
         self.fps = fps
