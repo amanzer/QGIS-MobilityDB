@@ -123,10 +123,6 @@ class Time_deltas_handler:
         new one to the right of the last matrix.
 
         """
-         
-        self.time_deltas_matrices = {} 
-        self.time_deltas_to_keep = deque(maxlen=TIME_DELTA_DEQUEUE_SIZE)
-        self.time_deltas_to_keep.append(0)
 
        
 
@@ -139,6 +135,9 @@ class Time_deltas_handler:
         self.extent = self.qviz.get_canvas_extent()
         self.objects_count = self.db.get_objects_count()
         self.objects_id_str = self.db.get_objects_str()
+        dimensions = (3, self.objects_count, TIME_DELTA_SIZE)
+        empty_point_wkt = Point().wkt
+        self.matrices = np.full(dimensions, empty_point_wkt, dtype=object)
 
         # Create qgsi features for all objects
         self.generate_qgis_features(self.objects_count, self.qviz.vlayer.fields(), self.timestamps[0], self.timestamps[-1])
@@ -149,8 +148,8 @@ class Time_deltas_handler:
         end_frame = (time_delta_key + TIME_DELTA_SIZE) -1
 
         task_matrix_gen = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
-                                     self.objects_id_str, self.extent, self.timestamps, self.create_matrix, self.set_matrix, self.raise_error)
-        task_matrix_gen.taskCompleted.connect(self.initiate_animation) # Start the animation when the first batch is fetched
+                                     self.objects_id_str, self.extent, self.timestamps, self.create_matrix, self.initiate_animation, self.raise_error)
+        # task_matrix_gen.taskCompleted.connect(self.initiate_animation) # Start the animation when the first batch is fetched
         self.task_manager.addTask(task_matrix_gen)     
 
         # self.task_manager.allTasksFinished.connect(self.resume_animation)
@@ -173,14 +172,21 @@ class Time_deltas_handler:
         
 
 
-    def initiate_animation(self):
+    def initiate_animation(self, params):
         """
         Once the first batch is fetched, make the request for the second and play the animation for this first time delta
         """
+        self.matrices[1] = params['matrix']
+        self.set_frame_rate(params['time'])
+
+
         # Request for second time delta
+        
         second_time_delta_key = TIME_DELTA_SIZE
         self.fetch_next_data(second_time_delta_key)
-        self.new_frame_features(0)
+        self.update_vlayer_features()
+
+        # self.new_frame_features(0)
         # self.task_manager.allTasksFinished.connect(self.resume_animation)
 
 
@@ -218,6 +224,16 @@ class Time_deltas_handler:
     
     # Methods to handle the animation and t_delta logic
 
+    def shift_matrices(self):
+        if self.direction == 1 : #shift Left
+            log(f"Shift left, matrix 2 becomes matrix 1, matrix 1 becomes matrix 0")
+            self.matrices[0] = self.matrices[1]
+            self.matrices[1] = self.matrices[2]
+        else : #shift Right
+            log(f"Shift right, matrix 0 becomes matrix 1, matrix 1 becomes matrix 2")
+            self.matrices[2] = self.matrices[1]
+            self.matrices[1] = self.matrices[0]
+
     def resume_animation(self):
         """
         PLays the animation in the current direction.
@@ -229,36 +245,22 @@ class Time_deltas_handler:
         """
         Creates a thread to fetch the data from the MobilityDB database for the given time delta.
         """
-        if self.task_manager.countActiveTasks() != 0: # Only allow one request at a time
-            return None
-        if  time_delta_key in  self.time_deltas_matrices.keys():
-            return None 
+        # if self.task_manager.countActiveTasks() != 0: # Only allow one request at a time
+        #     return None
+     
         # delta_key = self.timestamps_strings[time_delta_key]
 
         beg_frame = time_delta_key
         end_frame = (time_delta_key + TIME_DELTA_SIZE) -1
-        
+        log(f"Fetching data for time delta {beg_frame} : {end_frame}")
         if end_frame  <= self.total_frames and beg_frame >= 0: #Either bound has to be valid 
+            log("PRINT")
             # self.qviz.pause()
             task = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
                                      self.objects_id_str, self.extent, self.timestamps, self.create_matrix, self.set_matrix, self.raise_error)
             self.task_manager.addTask(task)        
 
 
-    def update_cache(self, time_delta_key):
-        """
-        Only have a maximum of TIME_DELTA_DEQUEUE_SIZE time deltas in memory at all times.
-        """
-        pass
-        
-        if time_delta_key not in self.time_deltas_to_keep:
-            self.time_deltas_to_keep.append(time_delta_key)
-            
-            # Remove all data associated to keys no longer in time_deltas_to_keep
-            for key in list(self.time_deltas_matrices.keys()):
-                if key not in self.time_deltas_to_keep:
-                    del self.time_deltas_matrices[key]
-           
         
     def new_frame_features(self, frame_number=0):
         """
@@ -285,7 +287,7 @@ class Time_deltas_handler:
                     self.current_time_delta_key = frame_number
                     self.current_time_delta_end = (self.current_time_delta_key + TIME_DELTA_SIZE) - 1
                     # log(f"------- FETCH NEXT BATCH  - forward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
-                    self.update_cache(self.current_time_delta_key)
+                    self.shift_matrices()
                     self.fetch_next_data(self.current_time_delta_key+TIME_DELTA_SIZE)
                     # if self.task_manager.countActiveTasks() != 0:
                     #     self.qviz.pause()
@@ -305,7 +307,7 @@ class Time_deltas_handler:
                     self.current_time_delta_end = frame_number-1
                     # log(f"------- FETCH NEXT BATCH  - backward - delta after : {self.current_time_delta_key} - delta end : {self.current_time_delta_end}")
                     
-                    self.update_cache(self.current_time_delta_key)
+                    self.shift_matrices()
                     self.fetch_next_data(self.current_time_delta_key-TIME_DELTA_SIZE)
                     self.changed_key = True
                     # if self.task_manager.countActiveTasks() != 0:
@@ -330,8 +332,7 @@ class Time_deltas_handler:
             frame_index = frame_number- time_delta_key
      
 
-            current_time_stamp_column = self.time_deltas_matrices[time_delta_key][:, frame_index]
-            
+            current_time_stamp_column = self.matrices[1][:, frame_index]
     
 
             new_geometries = {}  # Dictionary {feature_id: QgsGeometry}
@@ -440,15 +441,25 @@ class Time_deltas_handler:
         self.qviz.set_qgis_features(qgis_features_list)
         
 
+    def set_frame_rate(self, matrix_generation_time):
+        uninterrupted_animation = TIME_DELTA_SIZE / matrix_generation_time
+        new_fps = min(uninterrupted_animation, FPS)
+        self.qviz.set_fps(new_fps)
+
+
     def set_matrix(self, params):
         """
         Assign the new matrix to its tdelta key.
         """
-        self.time_deltas_matrices[params['key']] = params['matrix']
+        if self.direction == 1:
+            log("new assigned to Matrix 2   ")
+            self.matrices[2] = params['matrix']
+        else:
+            log("new assigned to Matrix 0   ")
+            self.matrices[0] = params['matrix']
+        self.set_frame_rate(params['time'])
+      
         
-        uninterrupted_animation = TIME_DELTA_SIZE / params['time']
-        new_fps = min(uninterrupted_animation, FPS)
-        self.qviz.set_fps(new_fps)
 
 
     def raise_error(self, msg):
@@ -525,7 +536,6 @@ class Matrix_generation_thread(QgsTask):
             TIME_total = time.time() - now
             log(f"multiprocess terminated in {TIME_total} s" )
             self.result_params = {
-                'key': self.begin_frame,
                 'matrix' : result_matrix,
                 'time' : TIME_total
             }
