@@ -1,5 +1,8 @@
 """
 
+This version : WKT replaced by shapely points in matrix
+
+
 New additions to the base multiprocessing :
 
 - Removed datetime attribute by a start and end attributes that no longer needs to be updated in ONF
@@ -44,10 +47,7 @@ class Time_granularity(Enum):
         Time_granularity.MINUTE.value["timedelta"] = timedelta(minutes=steps)
         Time_granularity.MINUTE.value["steps"] = steps
         return cls
-
-# class Direction(Enum):
-#     FORWARD = 1
-#     BACKWARD = 0
+    
 
 # Global parameters
 
@@ -111,7 +111,7 @@ class Time_deltas_handler:
         self.db = Database_connector()
         self.generate_timestamps()
         self.initiate_temporal_controller_values()
-       
+ 
 
         # variables to keep track of the current state of the animation
         self.current_time_delta_key = 0
@@ -123,8 +123,8 @@ class Time_deltas_handler:
         self.objects_count = self.db.get_objects_count()
         self.objects_id_str = self.db.get_objects_str()
         dimensions = (3, self.objects_count, TIME_DELTA_SIZE)
-        empty_point_wkt = Point().wkt
-        self.matrices = np.full(dimensions, empty_point_wkt, dtype=object)
+        empty_point = Point()
+        self.matrices = np.full(dimensions, empty_point, dtype=object)
 
         # Create qgsi features for all objects
         self.generate_qgis_features(self.objects_count, self.qviz.vlayer.fields(), self.timestamps[0], self.timestamps[-1])
@@ -320,10 +320,13 @@ class Time_deltas_handler:
 
             current_time_stamp_column = self.matrices[1][:, frame_index]
     
-
+            empty_geom_wkt = "POINT EMPTY"
             new_geometries = {}  # Dictionary {feature_id: QgsGeometry}
             for i in range(self.objects_count): #TODO : compare vs Nditer
-                new_geometries[i] = QgsGeometry().fromWkt(current_time_stamp_column[i])
+                if current_time_stamp_column[i].is_empty:
+                    new_geometries[i] = QgsGeometry().fromWkt(empty_geom_wkt)
+                else:    
+                    new_geometries[i] = QgsGeometry().fromWkt(current_time_stamp_column[i].wkt)
 
 
             self.qviz.vlayer.startEditing()
@@ -333,6 +336,7 @@ class Time_deltas_handler:
             iface.vectorLayerTools().stopEditing(self.qviz.vlayer)
 
         except Exception as e:
+            log(f"error: {e}")
             log(f"Error updating the features for time_delta : {self.current_time_delta_key} and frame number : {self.previous_frame}")
 
 
@@ -395,10 +399,11 @@ class Time_deltas_handler:
         connection.close()
 
         # Part 2 : Creating and filling the numpy matrix
+
         logs += f"Number of rows : {len(rows)}\n"
         now_matrix =time.time()
-        empty_point_wkt = Point().wkt  # "POINT EMPTY"
-        matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
+        empty_point = Point()  # "POINT EMPTY"
+        matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point, dtype=object)
         
         for i in range(len(rows)):
             if rows[i][2] is not None:
@@ -407,15 +412,15 @@ class Time_deltas_handler:
 
                     start_index = rows[i][0] - begin_frame
                     end_index = rows[i][1] - begin_frame
-                    values = np.array([point.wkt for point in traj_resampled.values()])
+                    values = np.array(traj_resampled.values())
                     matrix[i, start_index:end_index+1] = values
             
                 except:
                     continue
-                
+        
         logs += f"Matrix generation time : {time.time() - now_matrix}\n"
         logs += f"Matrix shape : {matrix.shape}\n"
-        logs += f"Number of non empty points : {np.count_nonzero(matrix != 'POINT EMPTY')}\n"
+        logs += f"Number of non empty points : {np.count_nonzero(matrix != Point())}\n"
 
             
         result_queue.put(matrix)
