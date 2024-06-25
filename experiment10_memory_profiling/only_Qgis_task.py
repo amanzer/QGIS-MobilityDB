@@ -356,7 +356,7 @@ class Time_deltas_handler:
             connection = MobilityDB.connect(**connection_params)    
             cursor = connection.cursor()
         
-            if GRANULARITY.value["name"] == "SECOND": 
+            if GRANULARITY.value["name"] == "SECOND": # TODO : handle granularity of different time steps(5 seconds etc)
                 time_value = 1 * GRANULARITY.value["steps"]
             elif GRANULARITY.value["name"] == "MINUTE":
                 time_value = 60 * GRANULARITY.value["steps"]
@@ -513,36 +513,83 @@ class Matrix_generation_thread(QgsTask):
                 "password": "postgres"
             }
 
-            result_queue = multiprocessing.Queue()
+            p_start = self.timestamps[self.begin_frame]
+            p_end = self.timestamps[self.end_frame]
+            start_date = self.timestamps[0]
+            x_min,y_min, x_max, y_max = self.extent
             
-            # log(f"arguments : begin_frame : {self.begin_frame}, end_frame : {self.end_frame}, TIME_DELTA_SIZE : {TIME_DELTA_SIZE}, PERCENTAGE_OF_OBJECTS : {PERCENTAGE_OF_OBJECTS}, {self.extent}, len timestamps :{len(self.timestamps)}, granularity : {GRANULARITY.value},{len(self.objects_id_str)}")
-            process = multiprocessing.Process(target=self.create_matrix, args=(result_queue, self.begin_frame, self.end_frame, TIME_DELTA_SIZE, self.extent, self.timestamps, connection_params, TPOINT_TABLE_NAME, TPOINT_ID_COLUMN_NAME, TPOINT_COLUMN_NAME, GRANULARITY, self.objects_id_str))
-            process.start()
-            # log(f"Process started")
-           
-            return_value = result_queue.get()
-            if return_value == 1:
-                error = result_queue.get()
-                log(f"Error inside new process: {error}")
-                self.result_params = {
-                    'matrix' : result_matrix,
+            # Part 1 : Fetch Tpoints from MobilityDB database
+            connection = MobilityDB.connect(**connection_params)    
+            cursor = connection.cursor()
+        
+            if GRANULARITY.value["name"] == "SECOND": 
+                time_value = 1 * GRANULARITY.value["steps"]
+            elif GRANULARITY.value["name"] == "MINUTE":
+                time_value = 60 * GRANULARITY.value["steps"]
+
+            tpoint_column_name = TPOINT_COLUMN_NAME
+            id_column_name = TPOINT_ID_COLUMN_NAME
+            table_name = TPOINT_TABLE_NAME
+
+            query = f"""WITH trajectories as (
+                    SELECT 
+                        atStbox(
+                            a.{tpoint_column_name}::tgeompoint,
+                            stbox(
+                                ST_MakeEnvelope(
+                                    {x_min}, {y_min}, -- xmin, ymin
+                                    {x_max}, {y_max}, -- xmax, ymax
+                                    {DATA_SRID} -- SRID
+                                ),
+                                tstzspan('[{p_start}, {p_end}]')
+                            )
+                        ) as trajectory
+                    FROM public.{table_name} as a 
+                    WHERE a.{id_column_name} in ({self.objects_id_str})),
+
+                    resampled as (
+
+                    SELECT tsample(traj.trajectory, INTERVAL '{GRANULARITY.value["steps"]} {GRANULARITY.value["name"]}', TIMESTAMP '{start_date}')  AS resampled_trajectory
+                        FROM 
+                            trajectories as traj)
+                
+                    SELECT
+                            EXTRACT(EPOCH FROM (startTimestamp(rs.resampled_trajectory) - '{start_date}'::timestamp))::integer / {time_value} AS start_index ,
+                            EXTRACT(EPOCH FROM (endTimestamp(rs.resampled_trajectory) - '{start_date}'::timestamp))::integer / {time_value} AS end_index,
+                            rs.resampled_trajectory
+                    FROM resampled as rs ;"""
+
+            cursor.execute(query)
+            # logs += f"query : {query}\n"
+            rows = cursor.fetchall()
+            cursor.close()
+            connection.close()
+
+          
+            # now_matrix =time.time()
+            empty_point_wkt = Point().wkt  # "POINT EMPTY"
+            matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
+            
+            for i in range(len(rows)):
+                if rows[i][2] is not None:
+                    try:
+                        traj_resampled = rows[i][2]
+
+                        start_index = rows[i][0] - self.begin_frame
+                        end_index = rows[i][1] - self.begin_frame
+                        values = np.array([point.wkt for point in traj_resampled.values()])
+                        matrix[i, start_index:end_index+1] = values
+                
+                    except Exception as e:
+                        log(e)
+                        continue
+            
+            TIME_total = time.time() - now
+            self.result_params = {
+                    'matrix' : matrix,
                     'time' : TIME_total
                 }
-                return True
-            else:
-                # Retrieve the result from the queue
-                result_matrix = result_queue.get()
-                logs= result_queue.get()
-                result_queue.close()
-                process.join()  # Wait for the process to complete
-                log(logs)
-                # log(f"Retrieved matrix shape: {result_matrix.shape}, logs {logs}" )
-                TIME_total = time.time() - now
-                log(f"multiprocess terminated in {TIME_total} s" )
-                self.result_params = {
-                    'matrix' : result_matrix,
-                    'time' : TIME_total
-                }
+
         except ValueError as e:
             self.error_msg = str(e)
             return False

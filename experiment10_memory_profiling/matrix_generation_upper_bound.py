@@ -129,14 +129,25 @@ class Time_deltas_handler:
         # Create qgsi features for all objects
         self.generate_qgis_features(self.objects_count, self.qviz.vlayer.fields(), self.timestamps[0], self.timestamps[-1])
 
+        start_point = TGeomPointInst(point=(0,0), timestamp="2023-06-01")
+
+        end_point = TGeomPointInst(point=(1,1), timestamp="2023-06-01 00:59:00")
+
+
+
+        traj = TGeomPointSeq.from_instants([start_point, end_point], upper_inc=True)
+
+        start = datetime(2023,6,1,0,0,0)
+        self.sample_trajectory = traj.temporal_sample(start=start,duration= timedelta(minutes=1))
+
         # Initiate request for first batch
         time_delta_key = 0
         beg_frame = time_delta_key
         end_frame = (time_delta_key + TIME_DELTA_SIZE) -1
-        self.last_recorded_time = time.time()
-
+        self.matrix_times = []
+        self.last_time = time.time()
         task_matrix_gen = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
-                                     self.objects_id_str, self.extent, self.timestamps, self.create_matrix, self.initiate_animation, self.raise_error)
+                                     self.objects_id_str, self.extent, self.sample_trajectory, self.timestamps, self.create_matrix, self.initiate_animation, self.raise_error)
         # task_matrix_gen.taskCompleted.connect(self.initiate_animation) # Start the animation when the first batch is fetched
         self.task_manager.addTask(task_matrix_gen)     
 
@@ -164,6 +175,7 @@ class Time_deltas_handler:
         """
         Once the first batch is fetched, make the request for the second and play the animation for this first time delta
         """
+        self.matrix_times.append(time.time() - self.last_time)
         self.matrices[1] = params['matrix']
         self.set_frame_rate(params['time'])
 
@@ -237,15 +249,15 @@ class Time_deltas_handler:
         #     return None
      
         # delta_key = self.timestamps_strings[time_delta_key]
-
+        self.last_time = time.time()
         beg_frame = time_delta_key
         end_frame = (time_delta_key + TIME_DELTA_SIZE) -1
         log(f"Fetching data for time delta {beg_frame} : {end_frame}")
         if end_frame  <= self.total_frames and beg_frame >= 0: #Either bound has to be valid 
-            self.last_recorded_time = time.time()
+            log("PRINT")
             # self.qviz.pause()
             task = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
-                                     self.objects_id_str, self.extent, self.timestamps, self.create_matrix, self.set_matrix, self.raise_error)
+                                     self.objects_id_str, self.extent, self.sample_trajectory, self.timestamps, self.create_matrix, self.set_matrix, self.raise_error)
             self.task_manager.addTask(task)        
 
 
@@ -339,24 +351,26 @@ class Time_deltas_handler:
 
     # Methods to handle the QGIS threads
 
-    def create_matrix(self, result_queue, begin_frame, end_frame, TIME_DELTA_SIZE, extent, timestamps, connection_params, table_name, id_column_name, tpoint_column_name, GRANULARITY, ids_str):
+    def create_matrix(self, result_queue, begin_frame, end_frame, TIME_DELTA_SIZE, extent, timestamps, connection_params, table_name, id_column_name, tpoint_column_name, GRANULARITY, ids_str, sample_traj):
         """
         This functions runs in a parallel process to fetch the data from the MobilityDB database for the given time delta.
         It creates the numpy matrix and fills it with the positions of the objects for the given time delta.
 
         """
-        try: 
+        try:
+            
+            now = time.time() 
             p_start = timestamps[begin_frame]
             p_end = timestamps[end_frame]
             start_date = timestamps[0]
             x_min,y_min, x_max, y_max = extent
             logs = ""
             
-            # Part 1 : Fetch Tpoints from MobilityDB database
-            connection = MobilityDB.connect(**connection_params)    
-            cursor = connection.cursor()
+            # # Part 1 : Fetch Tpoints from MobilityDB database
+            # connection = MobilityDB.connect(**connection_params)    
+            # cursor = connection.cursor()
         
-            if GRANULARITY.value["name"] == "SECOND": 
+            if GRANULARITY.value["name"] == "SECOND": # TODO : handle granularity of different time steps(5 seconds etc)
                 time_value = 1 * GRANULARITY.value["steps"]
             elif GRANULARITY.value["name"] == "MINUTE":
                 time_value = 60 * GRANULARITY.value["steps"]
@@ -389,34 +403,39 @@ class Time_deltas_handler:
                             rs.resampled_trajectory
                     FROM resampled as rs ;"""
 
-            cursor.execute(query)
-            # logs += f"query : {query}\n"
-            rows = cursor.fetchall()
-            cursor.close()
-            connection.close()
-
+            # cursor.execute(query)
+            # # logs += f"query : {query}\n"
+            # rows = cursor.fetchall()
+            # cursor.close()
+            # connection.close()
+            LENROWS = 5821
             # Part 2 : Creating and filling the numpy matrix
-            logs += f"Number of rows : {len(rows)}\n"
+            # logs += f"Number of rows : {len(rows)}\n"
             now_matrix =time.time()
-            empty_point_wkt = Point().wkt  # "POINT EMPTY"
-            matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
+            empty_point_wkt = Point()  # "POINT EMPTY"
+            matrix = np.full((LENROWS, TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
             
-            for i in range(len(rows)):
-                if rows[i][2] is not None:
+            for i in range(5821):
+                if sample_traj is not None:
                     try:
-                        traj_resampled = rows[i][2]
+                        traj_resampled = sample_traj
 
-                        start_index = rows[i][0] - begin_frame
-                        end_index = rows[i][1] - begin_frame
+                        start_index = 0
+                        end_index = 59
                         values = np.array([point.wkt for point in traj_resampled.values()])
                         matrix[i, start_index:end_index+1] = values
                 
-                    except:
-                        continue
+                    except Exception as e:
+                        logs += f"Error in fetching the data for object {i} : {e}\n"
+                        result_queue.put(1)
+                        result_queue.put(e)
+                        result_queue.put(logs)
+                        return False
                     
             logs += f"Matrix generation time : {time.time() - now_matrix}\n"
-            logs += f"Matrix shape : {matrix.shape}\n"
-            logs += f"Number of non empty points : {np.count_nonzero(matrix != 'POINT EMPTY')}\n"
+            logs += f"total process time: {time.time() - now}\n"
+            # logs += f"Matrix shape : {matrix.shape}\n"
+            # logs += f"Number of non empty points : {np.count_nonzero(matrix != 'POINT EMPTY')}\n"
 
             result_queue.put(0)
             result_queue.put(matrix)
@@ -450,11 +469,11 @@ class Time_deltas_handler:
         else:
             log("new assigned to Matrix 0   ")
             self.matrices[0] = params['matrix']
-        TIME_matrix = params['time'] # TODO : Probably remove in the final version
-        TIME_Qgs_Thread = time.time() - self.last_recorded_time
-        self.set_frame_rate(TIME_Qgs_Thread)
+        self.set_frame_rate(params['time'])
+        self.matrix_times.append(time.time() - self.last_time)
       
-        
+    def get_matrix_times(self):
+        return self.matrix_times
 
 
     def raise_error(self, msg):
@@ -472,7 +491,7 @@ class Matrix_generation_thread(QgsTask):
     """
     This thread creates next time delta's the matrix containing the positions for all objects to show. 
     """
-    def __init__(self, description,project_title, beg_frame, end_frame, objects_id_str, extent, timestamps, create_matrix_fnc, finished_fnc, failed_fnc):
+    def __init__(self, description,project_title, beg_frame, end_frame, objects_id_str, extent, sample_traj, timestamps, create_matrix_fnc, finished_fnc, failed_fnc):
         super(Matrix_generation_thread, self).__init__(description, QgsTask.CanCancel)
 
         self.project_title = project_title
@@ -481,6 +500,7 @@ class Matrix_generation_thread(QgsTask):
         self.end_frame = end_frame
         self.objects_id_str = objects_id_str
         self.extent = extent
+        self.sample_traj = sample_traj
         self.timestamps = timestamps
         self.create_matrix = create_matrix_fnc
         self.finished_fnc = finished_fnc
@@ -504,7 +524,7 @@ class Matrix_generation_thread(QgsTask):
         """
         try:
             
-            now = time.time()
+            
             connection_params= {
                 "host": "localhost",
                 "port": 5432,
@@ -514,9 +534,9 @@ class Matrix_generation_thread(QgsTask):
             }
 
             result_queue = multiprocessing.Queue()
-            
+            now = time.time()
             # log(f"arguments : begin_frame : {self.begin_frame}, end_frame : {self.end_frame}, TIME_DELTA_SIZE : {TIME_DELTA_SIZE}, PERCENTAGE_OF_OBJECTS : {PERCENTAGE_OF_OBJECTS}, {self.extent}, len timestamps :{len(self.timestamps)}, granularity : {GRANULARITY.value},{len(self.objects_id_str)}")
-            process = multiprocessing.Process(target=self.create_matrix, args=(result_queue, self.begin_frame, self.end_frame, TIME_DELTA_SIZE, self.extent, self.timestamps, connection_params, TPOINT_TABLE_NAME, TPOINT_ID_COLUMN_NAME, TPOINT_COLUMN_NAME, GRANULARITY, self.objects_id_str))
+            process = multiprocessing.Process(target=self.create_matrix, args=(result_queue, self.begin_frame, self.end_frame, TIME_DELTA_SIZE, self.extent, self.timestamps, connection_params, TPOINT_TABLE_NAME, TPOINT_ID_COLUMN_NAME, TPOINT_COLUMN_NAME, GRANULARITY, self.objects_id_str, self.sample_traj))
             process.start()
             # log(f"Process started")
            
@@ -524,6 +544,7 @@ class Matrix_generation_thread(QgsTask):
             if return_value == 1:
                 error = result_queue.get()
                 log(f"Error inside new process: {error}")
+                TIME_total = time.time() - now
                 self.result_params = {
                     'matrix' : result_matrix,
                     'time' : TIME_total
@@ -538,7 +559,7 @@ class Matrix_generation_thread(QgsTask):
                 log(logs)
                 # log(f"Retrieved matrix shape: {result_matrix.shape}, logs {logs}" )
                 TIME_total = time.time() - now
-                log(f"multiprocess terminated in {TIME_total} s" )
+                log(f"Time to start process and get the serialiazed queued objects {TIME_total} s" )
                 self.result_params = {
                     'matrix' : result_matrix,
                     'time' : TIME_total
