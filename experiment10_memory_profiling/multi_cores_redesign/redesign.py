@@ -272,15 +272,24 @@ class Time_deltas_handler:
       
         """
 
-        if self.previous_frame - frame_number <= 0:
+        # diff = self.previous_frame - frame_number
+        forward = self.previous_frame + 1
+        backward = self.previous_frame - 1
+        if frame_number == forward:
+            print("YOOHOO FORWARD")
             self.direction = 1 # Forward
             if frame_number >= self.total_frames: # Reached the end of the animation, pause
                 self.qviz.pause()
-        else:
+        elif frame_number == backward:
+            print("YOOHOO BACKWARD")
             self.direction = 0
             if frame_number <= 0: # Reached the beginning of the animation, pause
                 self.qviz.pause()
-            
+        else:
+            print("No new frame")
+            print(f"frame_number : {frame_number}, previous_frame : {self.previous_frame}") 
+            return False
+
         self.previous_frame = frame_number
 
         if frame_number % TIME_DELTA_SIZE == 0:
@@ -832,6 +841,7 @@ class QVIZ:
         Function called every time the frame of the temporal controller is changed. 
         It updates the content of the vector layer displayed on the map.
         """
+        
         now = time.time()
         curr_frame = self.temporalController.currentFrameNumber()
         self.handler.new_frame_features(curr_frame)
