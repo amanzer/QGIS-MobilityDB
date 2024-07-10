@@ -44,7 +44,7 @@ class Time_granularity(Enum):
 
 # Global parameters
 
-PERCENTAGE_OF_OBJECTS = 1 # To not overload the memory, we only take a percentage of the ships in the database
+PERCENTAGE_OF_OBJECTS = 0.5 # To not overload the memory, we only take a percentage of the ships in the database
 TIME_DELTA_SIZE = 60  # Number of frames associated to one Time delta
 FPS = 60
 
@@ -138,7 +138,7 @@ class Time_deltas_handler:
         self.last_recorded_time = time.time()
 
         task_matrix_gen = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
-                                     self.objects_id_str, self.extent, self.timestamps, self.initiate_animation, self.raise_error)
+                                     self.objects_id_str, self.extent, self.timestamps, self.db, self.initiate_animation, self.raise_error)
         # task_matrix_gen.taskCompleted.connect(self.initiate_animation) # Start the animation when the first batch is fetched
         self.task_manager.addTask(task_matrix_gen)     
 
@@ -262,7 +262,7 @@ class Time_deltas_handler:
             self.last_recorded_time = time.time()
             # self.qviz.pause()
             task = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
-                                     self.objects_id_str, self.extent, self.timestamps, self.set_matrix, self.raise_error)
+                                     self.objects_id_str, self.extent, self.timestamps, self.db, self.set_matrix, self.raise_error)
             self.task_manager.addTask(task)        
 
 
@@ -277,12 +277,12 @@ class Time_deltas_handler:
         forward = self.previous_frame + 1
         backward = self.previous_frame - 1
         if frame_number == forward:
-            print("YOOHOO FORWARD")
+            # print("YOOHOO FORWARD")
             self.direction = 1 # Forward
             if frame_number >= self.total_frames: # Reached the end of the animation, pause
                 self.qviz.pause()
         elif frame_number == backward:
-            print("YOOHOO BACKWARD")
+            # print("YOOHOO BACKWARD")
             self.direction = 0
             if frame_number <= 0: # Reached the beginning of the animation, pause
                 self.qviz.pause()
@@ -415,7 +415,7 @@ class Matrix_generation_thread(QgsTask):
     """
     This thread creates next time delta's the matrix containing the positions for all objects to show. 
     """
-    def __init__(self, description,project_title, beg_frame, end_frame, objects_id_str, extent, timestamps, finished_fnc, failed_fnc):
+    def __init__(self, description,project_title, beg_frame, end_frame, objects_id_str, extent, timestamps, db, finished_fnc, failed_fnc):
         super(Matrix_generation_thread, self).__init__(description, QgsTask.CanCancel)
 
         self.project_title = project_title
@@ -425,6 +425,7 @@ class Matrix_generation_thread(QgsTask):
         self.objects_id_str = objects_id_str
         self.extent = extent
         self.timestamps = timestamps
+        self.db = db
        
         self.finished_fnc = finished_fnc
         self.failed_fnc = failed_fnc
@@ -451,55 +452,9 @@ class Matrix_generation_thread(QgsTask):
             pid = os.getpid()
             log(f"QgisThread run pid : {pid} | affinity : {psutil.Process(pid).cpu_affinity()}")
 
-            connection_params= {
-                "host": "localhost",
-                "port": 5432,
-                "dbname": DATABASE_NAME,
-                "user": "postgres",
-                "password": "postgres"
-            }
-
-
-
-            p_start = self.timestamps[self.begin_frame]
-            p_end = self.timestamps[self.end_frame]
-
-            x_min,y_min, x_max, y_max = self.extent
-            logs = ""
-            
-            # Part 1 : Fetch Tpoints from MobilityDB database
-            connection = MobilityDB.connect(**connection_params)    
-            cursor = connection.cursor()
-        
-
-            query = f"""WITH trajectories as (
-                    SELECT 
-                        atStbox(
-                            a.{TPOINT_COLUMN_NAME}::tgeompoint,
-                            stbox(
-                                ST_MakeEnvelope(
-                                    {x_min}, {y_min}, -- xmin, ymin
-                                    {x_max}, {y_max}, -- xmax, ymax
-                                    {DATA_SRID} -- SRID
-                                ),
-                                tstzspan('[{p_start}, {p_end}]')
-                            )
-                        ) as trajectory
-                    FROM public.{TPOINT_TABLE_NAME} as a 
-                    WHERE a.{TPOINT_ID_COLUMN_NAME} in ({self.objects_id_str}))
-                
-                    SELECT
-                            rs.trajectory
-                    FROM trajectories as rs ;"""
-
-            cursor.execute(query)
-            # logs += f"query : {query}\n"
-            rows = cursor.fetchall()
-            cursor.close()
-            connection.close()
-
-            logs += f"Number of rows : {len(rows)}\n"
-            # now_matrix =time.time()
+            rows = self.db.get_tgeompoints(self.timestamps[self.begin_frame], self.timestamps[self.end_frame], self.extent)
+            log(f"Number of rows : {len(rows)}\n")
+      
             empty_point_wkt = Point().wkt  # "POINT EMPTY"
             matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
             for i in range(matrix.shape[1]):
@@ -617,12 +572,46 @@ class Database_connector:
             pass
 
 
+    def get_tgeompoints(self, p_start, p_end, extent):
+
+        x_min,y_min, x_max, y_max = extent
+        
+        
+        # Part 1 : Fetch Tpoints from MobilityDB database
+      
+
+        query = f"""WITH trajectories as (
+                SELECT 
+                    atStbox(
+                        a.{TPOINT_COLUMN_NAME}::tgeompoint,
+                        stbox(
+                            ST_MakeEnvelope(
+                                {x_min}, {y_min}, -- xmin, ymin
+                                {x_max}, {y_max}, -- xmax, ymax
+                                {DATA_SRID} -- SRID
+                            ),
+                            tstzspan('[{p_start}, {p_end}]')
+                        )
+                    ) as trajectory
+                FROM public.{TPOINT_TABLE_NAME} as a 
+                WHERE a.{TPOINT_ID_COLUMN_NAME} in ({self.objects_id_str}))
+            
+                SELECT
+                        rs.trajectory
+                FROM trajectories as rs ;"""
+
+        self.cursor.execute(query)
+        # logs += f"query : {query}\n"
+        return self.cursor.fetchall()
+
+
     def close(self):
         """
         Close the connection to the MobilityDB database.
         """
         self.cursor.close()
         self.connection.close()
+
 
     
 
@@ -692,21 +681,7 @@ class QVIZ:
         """
         Returns the average FPS of the temporal controller.
         """
-        filename = f"{PERCENTAGE_OF_OBJECTS}_objects_{TIME_DELTA_SIZE}_time_delta_{GRANULARITY.value['name']}_granularity_{GRANULARITY.value['steps']}.png"
-        
-        plt.plot(tt.fps_record)
-        plt.xlabel('Frame Number')
-        plt.ylabel('FPS')
-        plt.title('Frame Rate Over Time')
-        
-        # Add red vertical lines at every TIME_DELTA_SIZE multiple
-        for i in range(1, len(tt.fps_record) // TIME_DELTA_SIZE + 1):
-            plt.axvline(x=i * TIME_DELTA_SIZE, color='red')
-
-        plt.savefig(filename)        
-        plt.show()
-
-
+   
         return sum(self.fps_record)/len(self.fps_record)
 
 
