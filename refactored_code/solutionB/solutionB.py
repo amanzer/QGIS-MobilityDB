@@ -18,7 +18,7 @@ from enum import Enum
 import numpy as np
 from shapely.geometry import Point
 import math
-
+import pickle
 import os
 import psutil
 # Enum classes
@@ -44,9 +44,9 @@ class Time_granularity(Enum):
 
 # Global parameters
 
-PERCENTAGE_OF_OBJECTS = 0.5 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 60  # Number of frames associated to one Time delta
-FPS = 60
+PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
+TIME_DELTA_SIZE = 120  # Number of frames associated to one Time delta
+FPS = 100
 
 
 # TODO : Use Qgis data provider to access database and tables
@@ -129,13 +129,14 @@ class Time_deltas_handler:
         self.next_matrix = None
 
         # Create qgsi features for all objects
-        self.generate_qgis_features(self.objects_count, self.qviz.vlayer.fields(), self.timestamps[0], self.timestamps[-1])
+        self.generate_qgis_features(self.db.get_objects_ids(), self.qviz.vlayer.fields(), self.timestamps[0], self.timestamps[-1])
 
         # Initiate request for first batch
         time_delta_key = start_tdelta_key
         beg_frame = time_delta_key
         end_frame = (time_delta_key + TIME_DELTA_SIZE) -1
         self.last_recorded_time = time.time()
+        self.qgis_task_records = []
 
         task_matrix_gen = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
                                      self.objects_id_str, self.extent, self.timestamps, self.db, self.initiate_animation, self.raise_error)
@@ -153,19 +154,25 @@ class Time_deltas_handler:
 
     # Methods to handle initial setup 
 
-    def generate_qgis_features(self,num_objects, vlayer_fields,  start_date, end_date):
+    def generate_qgis_features(self,object_ids, vlayer_fields,  start_date, end_date):
         features_list =[]
         start_datetime_obj = QDateTime(start_date)
         end_datetime_obj = QDateTime(end_date)
-
-
-        for i in range(num_objects):
+        num_objects = len(object_ids)
+        # empty_geom = QgsGeometry.fromWkt("POINT EMPTY")
+        
+        self.geometries={}
+        for i in range(1, num_objects+1):
             feat = QgsFeature(vlayer_fields)
-            feat.setAttributes([start_datetime_obj, end_datetime_obj])
+            feat.setAttributes([ object_ids[i-1][0],start_datetime_obj, end_datetime_obj])
+            geom = QgsGeometry()
+            self.geometries[i] = geom
+            feat.setGeometry(geom)
             features_list.append(feat)
         
-        self.qviz.set_qgis_features(features_list)
+        self.qviz.vlayer.dataProvider().addFeatures(features_list)
         log(f"{num_objects} Qgis features created")
+
         
 
 
@@ -176,7 +183,7 @@ class Time_deltas_handler:
         self.current_matrix = params['matrix']
 
         matrix_time = time.time() - self.last_recorded_time
-
+        self.qgis_task_records.append(matrix_time)
         self.set_frame_rate(matrix_time)
 
 
@@ -187,6 +194,7 @@ class Time_deltas_handler:
         self.update_vlayer_features()
 
         # self.new_frame_features(0)
+        self.resume_animation()
         # self.task_manager.allTasksFinished.connect(self.resume_animation)
 
 
@@ -279,7 +287,9 @@ class Time_deltas_handler:
         if frame_number == forward:
             # print("YOOHOO FORWARD")
             self.direction = 1 # Forward
-            if frame_number >= self.total_frames: # Reached the end of the animation, pause
+            
+            if frame_number == 460: # Reached the end of the animation, pause
+                log("dsfjsdf")
                 self.qviz.pause()
         elif frame_number == backward:
             # print("YOOHOO BACKWARD")
@@ -347,20 +357,20 @@ class Time_deltas_handler:
 
             current_time_stamp_column = self.current_matrix[:, frame_index]
     
-            new_geometries = {}  
+            # new_geometries = {}  
             # new_geometries = {QgsGeometry().fromWkt(point) for point in current_time_stamp_column}  # Dictionary {feature_id: QgsGeometry}
-            for i in range(current_time_stamp_column.shape[0]): #TODO : compare vs Nditer
-                new_geometries[i] = QgsGeometry().fromWkt(current_time_stamp_column[i])
-
+            for i in range(1, self.objects_count+1): 
+                # new_geometries[i] = QgsGeometry().fromWkt(current_time_stamp_column[i])
+                self.geometries[i].fromWkb(current_time_stamp_column[i-1].wkb)
 
             self.qviz.vlayer.startEditing()
             # self.qviz.vlayer.dataProvider().changeAttributeValues(attribute_changes) # Updating attribute values for all features
-            self.qviz.vlayer.dataProvider().changeGeometryValues(new_geometries) # Updating geometries for all features
+            self.qviz.vlayer.dataProvider().changeGeometryValues(self.geometries) # Updating geometries for all features
             self.qviz.vlayer.commitChanges()
             iface.vectorLayerTools().stopEditing(self.qviz.vlayer)
 
         except Exception as e:
-            log(f"Error updating the features for time_delta : {self.current_time_delta_key} and frame number : {self.previous_frame}")
+            log(f"Error updating the features {e} for time_delta : {self.current_time_delta_key} and frame number : {self.previous_frame}")
 
 
     # Methods to handle the QGIS threads
@@ -395,6 +405,7 @@ class Time_deltas_handler:
       
 
         TIME_Qgs_Thread = time.time() - self.last_recorded_time
+        self.qgis_task_records.append(TIME_Qgs_Thread)
         self.set_frame_rate(TIME_Qgs_Thread)
       
         
@@ -455,14 +466,14 @@ class Matrix_generation_thread(QgsTask):
             rows = self.db.get_tgeompoints(self.timestamps[self.begin_frame], self.timestamps[self.end_frame], self.extent)
             log(f"Number of rows : {len(rows)}\n")
       
-            empty_point_wkt = Point().wkt  # "POINT EMPTY"
-            matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point_wkt, dtype=object)
+            empty_point = Point()  # "POINT EMPTY"
+            matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point, dtype=object)
             for i in range(matrix.shape[1]):
                 for j in range(matrix.shape[0]):
                     try:
                         if rows[j][0] is not None:
                             position = rows[j][0].value_at_timestamp(self.timestamps[self.begin_frame + i])
-                            matrix[j, i] = position.wkt
+                            matrix[j, i] = position
                     except Exception as e:
                         # log(f"{rows[j][0]}")                        
                         # log(f"Error at row {j} : {e}\n for frame { self.begin_frame + i} ")
@@ -537,6 +548,8 @@ class Database_connector:
         except Exception as e:
             log(e)
 
+    def get_objects_ids(self):
+        return self.ids_list
 
     def get_objects_str(self):
         return self.objects_id_str
@@ -638,6 +651,7 @@ class QVIZ:
         self.fps = FPS
 
         self.fps_record = []
+        self.onf_record = []
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
         # self.canvas.extentsChanged.connect(self.test(3))
  
@@ -648,7 +662,7 @@ class QVIZ:
         """
         self.vlayer = QgsVectorLayer("Point", "MobilityBD Data", "memory")
         pr = self.vlayer.dataProvider()
-        pr.addAttributes([QgsField("start_time", QVariant.DateTime), QgsField("end_time", QVariant.DateTime)])
+        pr.addAttributes([QgsField("id", QVariant.Int) ,QgsField("start_time", QVariant.DateTime), QgsField("end_time", QVariant.DateTime)])
         self.vlayer.updateFields()
         tp = self.vlayer.temporalProperties()
         tp.setIsActive(True)
@@ -661,16 +675,32 @@ class QVIZ:
 
         QgsProject.instance().addMapLayer(self.vlayer)
 
-    
-    def memory_usage(self, obj):
-        """
-        Returns the memory usage of the object in paramter, in mega bytes.
-        """
-        size_in_bytes = asizeof.asizeof(obj)
-        size_in_megabytes = size_in_bytes / (1024 * 1024)
-        log(f"Total size: {size_in_megabytes:.6f} MB")
 
-    
+
+    def memory_usage(self): 
+        """ 
+        Returns the memory usage of the object in paramter, in mega bytes. 
+        """ 
+
+        size_in_bytes = asizeof.asizeof(self.handler.current_matrix) 
+        size_in_megabytesa = size_in_bytes / (1024 * 1024) 
+        print(f"Total size current: {size_in_megabytesa:.6f} MB") 
+
+
+        size_in_bytes = asizeof.asizeof(self.handler.previous_matrix) 
+        size_in_megabytesb = size_in_bytes / (1024 * 1024) 
+        print(f"Total size previous: {size_in_megabytesb:.6f} MB") 
+
+
+        size_in_bytes = asizeof.asizeof(self.handler.next_matrix) 
+        size_in_megabytesc = size_in_bytes / (1024 * 1024) 
+        print(f"Total size next: {size_in_megabytesc:.6f} MB") 
+
+
+        print(f"Total size : {size_in_megabytesa + size_in_megabytesb + size_in_megabytesc:.6f} MB") 
+
+
+
     # Getters
 
     def get_canvas_extent(self):
@@ -681,8 +711,22 @@ class QVIZ:
         """
         Returns the average FPS of the temporal controller.
         """
-   
-        return sum(self.fps_record)/len(self.fps_record)
+
+        print(f"Average FPS : {sum(self.fps_record)/len(self.fps_record)} over {len(self.fps_record)} frames") 
+
+        # print(f"Time to fetch : {self.TIME_fetch_tgeompoints}") 
+
+        with open(f"/home/ali/QGIS-MobilityDB/refactored_code/solutionB/desktop_results/Solution_B_{TIME_DELTA_SIZE}_{PERCENTAGE_OF_OBJECTS}_fps_record.pickle", "wb") as file: 
+
+            pickle.dump(self.fps_record, file) 
+
+        with open(f"/home/ali/QGIS-MobilityDB/refactored_code/solutionB/desktop_results/Solution_B_{TIME_DELTA_SIZE}_{PERCENTAGE_OF_OBJECTS}_onf_record.pickle", "wb") as file: 
+
+            pickle.dump(self.onf_record, file) 
+
+        with open(f"/home/ali/QGIS-MobilityDB/refactored_code/solutionB/desktop_results/Solution_B_{TIME_DELTA_SIZE}_{PERCENTAGE_OF_OBJECTS}_qgis_record.pickle", "wb") as file: 
+
+            pickle.dump(self.handler.qgis_task_records, file) 
 
 
     # Setters 
@@ -740,12 +784,13 @@ class QVIZ:
         """
         # Calculating the optimal FPS based on the new frame time
         optimal_fps = 1 / new_frame_time
+        self.onf_record.append(optimal_fps)
         # Ensure FPS does not exceed 60
         fps = min(optimal_fps, self.fps)
 
         self.temporalController.setFramesPerSecond(fps)
         log(f"{fps} : FPS {optimal_fps}")
-        self.fps_record.append(optimal_fps)
+        self.fps_record.append(fps)
 
     
     def on_new_frame(self):

@@ -44,7 +44,7 @@ class Time_granularity(Enum):
 
 # Global parameters
 
-PERCENTAGE_OF_OBJECTS = 0.07 # To not overload the memory, we only take a percentage of the ships in the database
+PERCENTAGE_OF_OBJECTS = 0.5 # To not overload the memory, we only take a percentage of the ships in the database
 FPS = 100
 
 
@@ -168,7 +168,7 @@ class Database_connector:
 
 
         except Exception as e:
-            log(e)
+            log(f"{e}")
 
     def initiate_connection(self):
         try:
@@ -201,7 +201,7 @@ class Database_connector:
             ids_list = [ f"'{id[0]}'"  for id in self.ids_list]
             self.objects_id_str = ', '.join(map(str, ids_list))
         except Exception as e:
-            log(e)
+            log(f"{e}")
 
     def get_objects_ids(self):
         return self.ids_list
@@ -391,11 +391,11 @@ class QVIZ:
         print(f"Average FPS : {sum(self.fps_record)/len(self.fps_record)} over {len(self.fps_record)} frames")
         print(f"Time to fetch : {self.TIME_fetch_tgeompoints}")
         
-        with open(f"Solution_A_{PERCENTAGE_OF_OBJECTS}_fps_record.pickle", "wb") as file:
+        with open(f"/home/ali/QGIS-MobilityDB/refactored_code/solutionA/desktop_results/Solution_A_{PERCENTAGE_OF_OBJECTS}_fps_record.pickle", "wb") as file:
             pickle.dump(self.fps_record, file)
-        with open(f"Solution_A_{PERCENTAGE_OF_OBJECTS}_vat_record.pickle", "wb") as file:
+        with open(f"/home/ali/QGIS-MobilityDB/refactored_code/solutionA/desktop_results/Solution_A_{PERCENTAGE_OF_OBJECTS}_vat_record.pickle", "wb") as file:
             pickle.dump(self.vat_record, file)
-        with open(f"Solution_A_{PERCENTAGE_OF_OBJECTS}_geom_record.pickle", "wb") as file:
+        with open(f"/home/ali/QGIS-MobilityDB/refactored_code/solutionA/desktop_results/Solution_A_{PERCENTAGE_OF_OBJECTS}_geom_record.pickle", "wb") as file:
             pickle.dump(self.geom_record, file)
 
 
@@ -475,7 +475,7 @@ class QVIZ:
         for i in range(1, self.objects_count+1):
             # Fetching the position of the object at the current frame
             try:
-                position = self.tpoints[i][0].value_at_timestamp(self.timestamps[curr_frame])
+                position = self.tpoints[i-1][0].value_at_timestamp(self.timestamps[curr_frame])
                 
                 # Updating the geometry of the feature in the vector layer
                 self.geometries[i].fromWkb(position.wkb) # = QgsGeometry.fromWkt(position.wkt)
