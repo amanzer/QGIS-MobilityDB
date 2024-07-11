@@ -44,7 +44,7 @@ class Time_granularity(Enum):
 
 # Global parameters
 
-PERCENTAGE_OF_OBJECTS = 0.01 # To not overload the memory, we only take a percentage of the ships in the database
+PERCENTAGE_OF_OBJECTS = 0.07 # To not overload the memory, we only take a percentage of the ships in the database
 FPS = 100
 
 
@@ -203,6 +203,8 @@ class Database_connector:
         except Exception as e:
             log(e)
 
+    def get_objects_ids(self):
+        return self.ids_list
 
     def get_objects_str(self):
         return self.objects_id_str
@@ -332,7 +334,7 @@ class QVIZ:
         """
         self.vlayer = QgsVectorLayer("Point", "MobilityBD Data", "memory")
         pr = self.vlayer.dataProvider()
-        pr.addAttributes([QgsField("start_time", QVariant.DateTime), QgsField("end_time", QVariant.DateTime)])
+        pr.addAttributes([QgsField("id", QVariant.Int), QgsField("start_time", QVariant.DateTime), QgsField("end_time", QVariant.DateTime)])
         self.vlayer.updateFields()
         tp = self.vlayer.temporalProperties()
         tp.setIsActive(True)
@@ -347,16 +349,20 @@ class QVIZ:
         
     
 
-    def generate_qgis_features(self,num_objects, vlayer_fields,  start_date, end_date):
+    def generate_qgis_features(self,object_ids, vlayer_fields,  start_date, end_date):
         features_list =[]
         start_datetime_obj = QDateTime(start_date)
         end_datetime_obj = QDateTime(end_date)
-
-        empty_geom = QgsGeometry.fromWkt("POINT EMPTY")
-        for i in range(num_objects):
+        num_objects = len(object_ids)
+        # empty_geom = QgsGeometry.fromWkt("POINT EMPTY")
+        
+        self.geometries={}
+        for i in range(1, num_objects+1):
             feat = QgsFeature(vlayer_fields)
-            feat.setAttributes([start_datetime_obj, end_datetime_obj])
-            feat.setGeometry(empty_geom)
+            feat.setAttributes([ object_ids[i-1][0],start_datetime_obj, end_datetime_obj])
+            geom = QgsGeometry()
+            self.geometries[i] = geom
+            feat.setGeometry(geom)
             features_list.append(feat)
         
         self.vlayer.dataProvider().addFeatures(features_list)
@@ -464,15 +470,15 @@ class QVIZ:
         now = time.time()
         curr_frame = self.temporalController.currentFrameNumber()
         # log("ONF START")
-        self.new_geometries = {}
+        # self.new_geometries = {}
         # hits = 0
-        for i in range(self.objects_count):
+        for i in range(1, self.objects_count+1):
             # Fetching the position of the object at the current frame
             try:
                 position = self.tpoints[i][0].value_at_timestamp(self.timestamps[curr_frame])
                 
                 # Updating the geometry of the feature in the vector layer
-                self.new_geometries[i] = QgsGeometry.fromWkt(position.wkt)
+                self.geometries[i].fromWkb(position.wkb) # = QgsGeometry.fromWkt(position.wkt)
                 # hits+=1
             except:
                 continue
@@ -482,7 +488,7 @@ class QVIZ:
 
         mid_time = time.time()
         self.vlayer.startEditing()
-        self.vlayer.dataProvider().changeGeometryValues(self.new_geometries)
+        self.vlayer.dataProvider().changeGeometryValues(self.geometries)
         self.vlayer.commitChanges()
         self.canvas.refresh()
         iface.vectorLayerTools().stopEditing(self.vlayer)
@@ -491,7 +497,7 @@ class QVIZ:
 
         # log("END ONF")
         self.avg_count += 1
-        self.avg_nb_objects += ( len(self.new_geometries) - self.avg_nb_objects ) / self.avg_count
+        self.avg_nb_objects += ( len(self.geometries) - self.avg_nb_objects ) / self.avg_count
         
 
         
@@ -508,6 +514,7 @@ class QVIZ:
         self.timestamps = params['timestamps']
         self.timestamps_strings = params['timestamps_strings']
         self.objects_count = self.db.get_objects_count()
+        
 
 
         self.temporalController = self.canvas.temporalController()
@@ -522,7 +529,7 @@ class QVIZ:
         self.set_temporal_controller_frame_duration(interval)
         self.set_temporal_controller_frame_rate(self.fps)
 
-        self.generate_qgis_features(self.objects_count, self.vlayer.fields(), self.timestamps[0], self.timestamps[-1])
+        self.generate_qgis_features(self.db.get_objects_ids(), self.vlayer.fields(), self.timestamps[0], self.timestamps[-1])
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
 
 
