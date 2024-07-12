@@ -128,16 +128,16 @@ class Fetch_tpoints_thread(QgsTask):
 
             start_date = self.db.get_min_timestamp()
             end_date = self.db.get_max_timestamp()
-            self.total_frames = math.ceil( (end_date - start_date) // GRANULARITY.value["timedelta"] ) + 1
+            # self.total_frames = math.ceil( (end_date - start_date) // GRANULARITY.value["timedelta"] ) + 1
         
 
-            self.timestamps = [start_date + i * GRANULARITY.value["timedelta"] for i in range(self.total_frames)]
-            self.timestamps = [dt.replace(tzinfo=None) for dt in self.timestamps]
 
           
             self.result_params = {
                 'tgeompoints' : self.db.get_tgeompoints(self.extent),
-                'timestamps' : self.timestamps,
+            
+                'start_timestamp' : start_date,
+                'end_timestamp' : end_date,
                 'start_time' : now
 
             }
@@ -467,13 +467,15 @@ class QVIZ:
         
         now = time.time()
         curr_frame = self.temporalController.currentFrameNumber()
+
+        timestamp = self.start_date + GRANULARITY.value["timedelta"]  * curr_frame
         # log("ONF START")
         # self.new_geometries = {}
         # hits = 0
         for i in range(1, self.objects_count+1):
             # Fetching the position of the object at the current frame
             try:
-                position = self.tpoints[i-1][0].value_at_timestamp(self.timestamps[curr_frame])
+                position = self.tpoints[i-1][0].value_at_timestamp(timestamp)
                 
                 # Updating the geometry of the feature in the vector layer
                 self.geometries[i].fromWkb(position.wkb) # = QgsGeometry.fromWkt(position.wkt)
@@ -509,7 +511,9 @@ class QVIZ:
         self.TIME_fetch_tgeompoints = time.time() - params['start_time']
         self.tpoints = params['tgeompoints']
      
-        self.timestamps = params['timestamps']
+        self.start_date = params['start_timestamp']
+        self.end_date = params['end_timestamp']
+
         self.objects_count = self.db.get_objects_count()
         
 
@@ -517,7 +521,7 @@ class QVIZ:
         self.temporalController = self.canvas.temporalController()
         self.temporalController.setCurrentFrameNumber(0)
 
-        time_range = QgsDateTimeRange(self.timestamps[0], self.timestamps[-1])
+        time_range = QgsDateTimeRange(self.start_date, self.end_date)
         interval = QgsInterval(GRANULARITY.value["steps"], GRANULARITY.value["qgs_unit"])
         self.fps = FPS
         
@@ -526,7 +530,7 @@ class QVIZ:
         self.set_temporal_controller_frame_duration(interval)
         self.set_temporal_controller_frame_rate(self.fps)
 
-        self.generate_qgis_features(self.db.get_objects_ids(), self.vlayer.fields(), self.timestamps[0], self.timestamps[-1])
+        self.generate_qgis_features(self.db.get_objects_ids(), self.vlayer.fields(), self.start_date, self.end_date)
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
 
 
