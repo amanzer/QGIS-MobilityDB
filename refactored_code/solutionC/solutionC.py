@@ -102,7 +102,7 @@ class Time_deltas_handler:
         
         self.qviz = qviz
         self.extent = self.qviz.get_initial_canvas_extent()
-        self.db = Database_connector(self.extent)
+        self.db = Database_connector(self.extent) # TODO remove extent in intial mmsi fetch
         self.generate_timestamps()
 
 
@@ -270,8 +270,16 @@ class Time_deltas_handler:
         if end_frame  <= self.total_frames and beg_frame >= 0: #Either bound has to be valid 
             self.last_recorded_time = time.time()
             # self.qviz.pause()
+            current_extent = self.qviz.get_current_canvas_extent()
+
+            if current_extent != self.extent:
+                self.extent = current_extent
+                self.qviz.pause()
+                iface.messageBar().pushMessage("Info", "Animation has paused to adapt to new canvas", level=Qgis.Info)
+
+                
             task = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
-                                     self.objects_id_str, self.qviz.get_current_canvas_extent(), self.timestamps, self.db, self.set_matrix, self.raise_error)
+                                     self.objects_id_str, self.extent, self.timestamps, self.db, self.set_matrix, self.raise_error)
             self.task_manager.addTask(task)        
 
 
@@ -416,7 +424,7 @@ class Time_deltas_handler:
         TIME_Qgs_Thread = time.time() - self.last_recorded_time
         log(f"Matrix generation time : {TIME_Qgs_Thread}")
         self.qgis_task_records.append(TIME_Qgs_Thread)
-        self.set_frame_rate(TIME_Qgs_Thread)
+        # self.set_frame_rate(TIME_Qgs_Thread)
       
         
 
@@ -663,7 +671,15 @@ class QVIZ:
         self.fps_record = []
         self.onf_record = []
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
-        # self.canvas.extentsChanged.connect(self.test(3))
+        # self.canvas.extentsChanged.connect(self.test)
+        # self.last_extent_change_time = time.time()
+
+    def test(self):
+        # if difference between last extent change and current time is greater than 1 millisecond
+        now= time.time()
+        if now - self.last_extent_change_time > 1: 
+            self.last_extent_change_time = now
+            log(f"Extent changed at ts : {time.time()}")
  
 
     def create_vlayer(self):
