@@ -44,8 +44,8 @@ class Time_granularity(Enum):
 
 # Global parameters
 
-PERCENTAGE_OF_OBJECTS = 0.5 # To not overload the memory, we only take a percentage of the ships in the database
-TIME_DELTA_SIZE = 30  # Number of frames associated to one Time delta
+PERCENTAGE_OF_OBJECTS = 0.1 # To not overload the memory, we only take a percentage of the ships in the database
+TIME_DELTA_SIZE = 120  # Number of frames associated to one Time delta
 FPS = 100
 
 
@@ -99,12 +99,10 @@ class Time_deltas_handler:
         
         self.task_manager = QgsApplication.taskManager()
         pymeos_initialize()
-        self.ts = []
-        self.fps_ts = []
-        self.qgis_overhead = []
+        
         self.qviz = qviz
-        self.extent = self.qviz.get_initial_canvas_extent()
-        self.db = Database_connector(self.extent) # TODO remove extent in intial mmsi fetch
+        self.extent = self.qviz.get_canvas_extent()
+        self.db = Database_connector(self.extent)
         self.generate_timestamps()
 
 
@@ -141,7 +139,7 @@ class Time_deltas_handler:
         self.qgis_task_records = []
 
         task_matrix_gen = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
-                                     self.objects_id_str, self.extent, self.timestamps, self.db, time.time(), self.initiate_animation, self.raise_error)
+                                     self.objects_id_str, self.extent, self.timestamps, self.db, self.initiate_animation, self.raise_error)
         # task_matrix_gen.taskCompleted.connect(self.initiate_animation) # Start the animation when the first batch is fetched
         self.task_manager.addTask(task_matrix_gen)     
 
@@ -183,11 +181,10 @@ class Time_deltas_handler:
         Once the first batch is fetched, make the request for the second and play the animation for this first time delta
         """
         self.current_matrix = params['matrix']
-        self.qgis_overhead.append(params['last_ts1'] + (time.time() - params['last_ts2']))
+
         matrix_time = time.time() - self.last_recorded_time
-        log(f"Matrix generation time : {matrix_time}")
         self.qgis_task_records.append(matrix_time)
-        # self.set_frame_rate(matrix_time)
+        self.set_frame_rate(matrix_time)
 
 
         # Request for second time delta
@@ -197,7 +194,7 @@ class Time_deltas_handler:
         self.update_vlayer_features()
 
         # self.new_frame_features(0)
-        # self.resume_animation()
+        self.resume_animation()
         # self.task_manager.allTasksFinished.connect(self.resume_animation)
 
 
@@ -272,16 +269,8 @@ class Time_deltas_handler:
         if end_frame  <= self.total_frames and beg_frame >= 0: #Either bound has to be valid 
             self.last_recorded_time = time.time()
             # self.qviz.pause()
-            current_extent = self.qviz.get_current_canvas_extent()
-
-            if current_extent != self.extent:
-                self.extent = current_extent
-                self.qviz.pause()
-                iface.messageBar().pushMessage("Info", "Animation has paused to adapt to new canvas", level=Qgis.Info)
-
-                
             task = Matrix_generation_thread(f"Data for time delta {time_delta_key} : {self.timestamps_strings[time_delta_key]}","qViz", beg_frame, end_frame,
-                                     self.objects_id_str, self.extent, self.timestamps, self.db, time.time(), self.set_matrix, self.raise_error)
+                                     self.objects_id_str, self.extent, self.timestamps, self.db, self.set_matrix, self.raise_error)
             self.task_manager.addTask(task)        
 
 
@@ -302,28 +291,6 @@ class Time_deltas_handler:
             if frame_number == 460: # Reached the end of the animation, pause
                 log("dsfjsdf")
                 self.qviz.pause()
-                # print(f"Time to fetch : {self.TIME_fetch_tgeompoints}") 
-
-                # with open(f"Solution_C_{TIME_DELTA_SIZE}_{PERCENTAGE_OF_OBJECTS}_fps_record.pickle", "wb") as file: 
-
-                #     pickle.dump(self.qviz.fps_record, file) 
-
-                # with open(f"Solution_C_{TIME_DELTA_SIZE}_{PERCENTAGE_OF_OBJECTS}_fps_ts_record.pickle", "wb") as file: 
-
-                #     pickle.dump(self.qviz.fps_ts, file) 
-
-                # with open(f"Solution_C_{TIME_DELTA_SIZE}_{PERCENTAGE_OF_OBJECTS}_ts_record.pickle", "wb") as file: 
-
-                #     pickle.dump(self.ts, file) 
-                
-                with open(f"Solution_C_{TIME_DELTA_SIZE}_{PERCENTAGE_OF_OBJECTS}_qgis_overhead.pickle", "wb") as file: 
-
-                    pickle.dump(self.qgis_overhead, file)
-                
-                with open(f"Solution_C_{TIME_DELTA_SIZE}_{PERCENTAGE_OF_OBJECTS}_qgis_time.pickle", "wb") as file: 
-
-                    pickle.dump(self.qgis_task_records, file)
-
         elif frame_number == backward:
             # print("YOOHOO BACKWARD")
             self.direction = 0
@@ -385,24 +352,16 @@ class Time_deltas_handler:
         try:
             time_delta_key = self.current_time_delta_key
             frame_number = self.previous_frame
-            # frame_index = frame_number- time_delta_key
+            frame_index = frame_number- time_delta_key
      
 
-            # current_time_stamp_column = self.current_matrix[:, frame_index]
+            current_time_stamp_column = self.current_matrix[:, frame_index]
     
             # new_geometries = {}  
             # new_geometries = {QgsGeometry().fromWkt(point) for point in current_time_stamp_column}  # Dictionary {feature_id: QgsGeometry}
-            for i in range(1, self.objects_count+1):
-                try:
-                    position = self.current_matrix[i-1][0].value_at_timestamp(self.timestamps[frame_number])
-                    
-                    # Updating the geometry of the feature in the vector layer
-                    self.geometries[i].fromWkb(position.wkb) # = QgsGeometry.fromWkt(position.wkt)
-                    # hits+=1
-                except:
-                    continue 
-                # new_geometries[i] = QgsGeometry().fromWkt(current_time_stamp_column[i-1])
-                # self.geometries[i].fromWkb(current_time_stamp_column[i-1].wkb)
+            for i in range(1, self.objects_count+1): 
+                # new_geometries[i] = QgsGeometry().fromWkt(current_time_stamp_column[i])
+                self.geometries[i].fromWkb(current_time_stamp_column[i-1].wkb)
 
             self.qviz.vlayer.startEditing()
             # self.qviz.vlayer.dataProvider().changeAttributeValues(attribute_changes) # Updating attribute values for all features
@@ -443,12 +402,11 @@ class Time_deltas_handler:
        
         log("next matrix ready ")
         self.next_matrix = params['matrix']
-        self.ts.append([params['ts']])      
-        self.qgis_overhead.append(params['last_ts1'] + (time.time() - params['last_ts2']))
+      
+
         TIME_Qgs_Thread = time.time() - self.last_recorded_time
-        log(f"Matrix generation time : {TIME_Qgs_Thread}")
         self.qgis_task_records.append(TIME_Qgs_Thread)
-        # self.set_frame_rate(TIME_Qgs_Thread)
+        self.set_frame_rate(TIME_Qgs_Thread)
       
         
 
@@ -468,11 +426,11 @@ class Matrix_generation_thread(QgsTask):
     """
     This thread creates next time delta's the matrix containing the positions for all objects to show. 
     """
-    def __init__(self, description,project_title, beg_frame, end_frame, objects_id_str, extent, timestamps, db, last_ts, finished_fnc, failed_fnc):
+    def __init__(self, description,project_title, beg_frame, end_frame, objects_id_str, extent, timestamps, db, finished_fnc, failed_fnc):
         super(Matrix_generation_thread, self).__init__(description, QgsTask.CanCancel)
-        self.now = datetime.now()
+
         self.project_title = project_title
-        self.last_ts = last_ts
+
         self.begin_frame = beg_frame
         self.end_frame = end_frame
         self.objects_id_str = objects_id_str
@@ -501,17 +459,31 @@ class Matrix_generation_thread(QgsTask):
         """
         Runs the new process to create the matrix for the given time delta.
         """
-        p1 =  time.time() - self.last_ts
         try:
-            now = datetime.now()
+            pid = os.getpid()
+            log(f"QgisThread run pid : {pid} | affinity : {psutil.Process(pid).cpu_affinity()}")
+
             rows = self.db.get_tgeompoints(self.timestamps[self.begin_frame], self.timestamps[self.end_frame], self.extent)
-            now2 = datetime.now()
+            log(f"Number of rows : {len(rows)}\n")
+      
+            empty_point = Point()  # "POINT EMPTY"
+            matrix = np.full((len(rows), TIME_DELTA_SIZE), empty_point, dtype=object)
+            for i in range(matrix.shape[1]):
+                for j in range(matrix.shape[0]):
+                    try:
+                        if rows[j][0] is not None:
+                            position = rows[j][0].value_at_timestamp(self.timestamps[self.begin_frame + i])
+                            matrix[j, i] = position
+                    except Exception as e:
+                        # log(f"{rows[j][0]}")                        
+                        # log(f"Error at row {j} : {e}\n for frame { self.begin_frame + i} ")
+                        continue
+                
+
+
 
             self.result_params = {
-                'matrix' : rows,
-                'ts' : [self.now,now, now2],
-                'last_ts1' : p1,
-                'last_ts2' : time.time()
+                'matrix' : matrix
             }
         except Exception as e:
             log(f"Error in run method : {e}")
@@ -680,17 +652,8 @@ class QVIZ:
 
         self.fps_record = []
         self.onf_record = []
-        self.fps_ts=[]
         self.temporalController.updateTemporalRange.connect(self.on_new_frame)
-        # self.canvas.extentsChanged.connect(self.test)
-        # self.last_extent_change_time = time.time()
-
-    def test(self):
-        # if difference between last extent change and current time is greater than 1 millisecond
-        now= time.time()
-        if now - self.last_extent_change_time > 1: 
-            self.last_extent_change_time = now
-            log(f"Extent changed at ts : {time.time()}")
+        # self.canvas.extentsChanged.connect(self.test(3))
  
 
     def create_vlayer(self):
@@ -740,10 +703,7 @@ class QVIZ:
 
     # Getters
 
-    def get_current_canvas_extent(self):
-        return self.canvas.extent().toRectF().getCoords()
-
-    def get_initial_canvas_extent(self):
+    def get_canvas_extent(self):
         return self.extent
     
 
@@ -754,7 +714,19 @@ class QVIZ:
 
         print(f"Average FPS : {sum(self.fps_record)/len(self.fps_record)} over {len(self.fps_record)} frames") 
 
-        
+        # print(f"Time to fetch : {self.TIME_fetch_tgeompoints}") 
+
+        with open(f"/home/ali/QGIS-MobilityDB/refactored_code/solutionB/desktop_results/Solution_B_{TIME_DELTA_SIZE}_{PERCENTAGE_OF_OBJECTS}_fps_record.pickle", "wb") as file: 
+
+            pickle.dump(self.fps_record, file) 
+
+        with open(f"/home/ali/QGIS-MobilityDB/refactored_code/solutionB/desktop_results/Solution_B_{TIME_DELTA_SIZE}_{PERCENTAGE_OF_OBJECTS}_onf_record.pickle", "wb") as file: 
+
+            pickle.dump(self.onf_record, file) 
+
+        with open(f"/home/ali/QGIS-MobilityDB/refactored_code/solutionB/desktop_results/Solution_B_{TIME_DELTA_SIZE}_{PERCENTAGE_OF_OBJECTS}_qgis_record.pickle", "wb") as file: 
+
+            pickle.dump(self.handler.qgis_task_records, file) 
 
 
     # Setters 
@@ -812,15 +784,14 @@ class QVIZ:
         """
         # Calculating the optimal FPS based on the new frame time
         optimal_fps = 1 / new_frame_time
-        # self.onf_record.append(optimal_fps)
+        self.onf_record.append(optimal_fps)
         # Ensure FPS does not exceed 60
         fps = min(optimal_fps, self.fps)
 
         self.temporalController.setFramesPerSecond(fps)
         log(f"{fps} : FPS {optimal_fps}")
-        now = datetime.now()
         self.fps_record.append(fps)
-        self.fps_ts.append(now)
+
     
     def on_new_frame(self):
         """
