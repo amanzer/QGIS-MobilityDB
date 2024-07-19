@@ -20,13 +20,21 @@ import time
 
 
 
-SRID = 4326
+# SRID = 4326
+# ########## AIS Danish maritime dataset ##########
+# DATABASE_NAME = "mobilitydb"
+# TPOINT_TABLE_NAME = "PyMEOS_demo_500"
+# TPOINT_ID_COLUMN_NAME = "MMSI"
+# TPOINT_COLUMN_NAME = "trajectory"
+
+
+SRID = 3857
 ########## AIS Danish maritime dataset ##########
-DATABASE_NAME = "mobilitydb"
-TPOINT_TABLE_NAME = "PyMEOS_demo_500"
-TPOINT_ID_COLUMN_NAME = "MMSI"
-TPOINT_COLUMN_NAME = "trajectory"
-# GRANULARITY = Time_granularity.set_time_step(1).MINUTE
+DATABASE_NAME = "stib"
+TPOINT_TABLE_NAME = "trips_mdb"
+TPOINT_ID_COLUMN_NAME = "trip_id"
+TPOINT_COLUMN_NAME = "trip"
+
 
 
 def log(msg):
@@ -57,8 +65,9 @@ class DatabaseController:
     def get_TgeomPoints(self):
         try:
             query = f"""
-            SELECT {self.id_column_name}, {self.tpoint_column_name}, startTimestamp({self.tpoint_column_name}), endTimestamp({self.tpoint_column_name}) FROM public.{self.table_name};
+            SELECT {self.id_column_name}, {self.tpoint_column_name}, startTimestamp({self.tpoint_column_name}), endTimestamp({self.tpoint_column_name}) FROM public.{self.table_name} LIMIT 100000 ;
             """
+            log(f"Query : {query}")
             self.connection = MobilityDB.connect(**self.connection_params)
             self.cursor = self.connection.cursor()
             self.cursor.execute(query)
@@ -161,7 +170,7 @@ class fetch_data_thread(QgsTask):
             for rows in results:
                 tgeompoints[rows[0]] = rows[1:]
 
-
+            
             self.result_params = {
                 'TgeomPoints_list' : tgeompoints
             }
@@ -193,9 +202,9 @@ class MobilitydbLayerHandler:
         Function called when the task to fetch the data from the MobilityDB database failed.
         """
         if msg:
-            self.log("Error: " + msg)
+            log("Error: " + msg)
         else:
-            self.log("Unknown error")
+            log("Unknown error")
 
     def on_fetch_data_finished(self, result_params):
         """
