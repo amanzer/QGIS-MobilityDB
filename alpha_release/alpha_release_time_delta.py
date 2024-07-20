@@ -17,18 +17,18 @@ import time
 
 
 
-LIMIT = 500
+LIMIT = 600000
 TIME_DELTA_SIZE = 30
 
-# SRID = 4326
-# ########## AIS Danish maritime dataset ##########
+
+########## AIS Danish maritime dataset ##########
 # DATABASE_NAME = "mobilitydb"
-# TPOINT_TABLE_NAME = "PyMEOS_demo_500"
+# TPOINT_TABLE_NAME = "PyMEOS_demo"
 # TPOINT_ID_COLUMN_NAME = "MMSI"
 # TPOINT_COLUMN_NAME = "trajectory"
 
 
-SRID = 3857
+# SRID = 3857
 ########## AIS Danish maritime dataset ##########
 DATABASE_NAME = "stib"
 TPOINT_TABLE_NAME = "trips_mdb"
@@ -65,25 +65,34 @@ class DatabaseController:
             log(f"Error in initiating Database Connector : {e}")
 
     def get_IDs_timestamps(self, limit):
-
-        query_srid = f"""
-        SELECT srid{self.tpoint_column_name} FROM public.{self.table_name} LIMIT 1 ;
         """
-        self.cursor.execute(query_srid)
-        srid = self.cursor.fetchall()[0][0]
-
-        query = f"""
-        SELECT {self.id_column_name}, startTimestamp({self.tpoint_column_name}), endTimestamp({self.tpoint_column_name}) FROM public.{self.table_name} LIMIT {limit} ;
+        Fetch the IDs and the start/end timestamps of the tgeompoints.
         """
-        self.cursor.execute(query)
-        res = self.cursor.fetchall()
-        return res, srid
+        query_srid = ""
+        query = ""
+        try: 
+            query_srid = f"""
+            SELECT srid({self.tpoint_column_name}) FROM public.{self.table_name} LIMIT 1 ;
+            """
+            self.cursor.execute(query_srid)
+            srid = self.cursor.fetchall()[0][0]
+
+            query = f"""
+            SELECT {self.id_column_name}, startTimestamp({self.tpoint_column_name}), endTimestamp({self.tpoint_column_name}) FROM public.{self.table_name} LIMIT {limit} ;
+            """
+            self.cursor.execute(query)
+            res = self.cursor.fetchall()
+            return res, srid
+        except Exception as e:
+            log(f"Error in fetching IDs and timestamps : {e} \n query_srid : {query_srid} \n query : {query}")
+            return None
 
 
     def get_TgeomPoints(self, start_ts, end_ts, limit):
-        
+        """
+        Fetch the TgeomPoints for the given time range.
+        """
         try:
-
             query = f"""
             SELECT attime(a.{self.tpoint_column_name}::tgeompoint,span('{start_ts}'::timestamptz, '{end_ts}'::timestamptz, true, true))
             FROM public.{self.table_name} AS a  LIMIT {limit};
@@ -91,22 +100,42 @@ class DatabaseController:
             # query = f"""
             # SELECT {self.id_column_name}, {self.tpoint_column_name}, startTimestamp({self.tpoint_column_name}), endTimestamp({self.tpoint_column_name}) FROM public.{self.table_name} LIMIT 100000 ;
             # """
-            log(f"Query : {query}")
+            # log(f"Query : {query}")
             self.cursor.execute(query)
             res = self.cursor.fetchall()
-
-            self.cursor.close()
-            self.connection.close()
-
             return res
         except Exception as e:
-            log(f"Error in fetching TgeomPoints : {e}")
+            log(f"Error in fetching time delta TgeomPoints : {e} \n query : {query}")
             return None
 
-    def close_connection(self):
-        self.cursor.close()
-        self.connection.close()
+
+    def get_min_timestamp(self):
+        """
+        Returns the min timestamp of the tpoints columns.
+        """
+        try:
+            query = f"SELECT MIN(startTimestamp({self.tpoint_column_name})) AS earliest_timestamp FROM public.{self.table_name};"
+            self.cursor.execute(query)
+            return self.cursor.fetchone()[0]
+        except Exception as e:
+            log(f"Error in fetching min timestamp : {e} \n query : {query}")
+
+
+    def get_max_timestamp(self):
+        """
+        Returns the max timestamp of the tpoints columns.
+
+        """
+        try:
+            query = f"SELECT MAX(endTimestamp({self.tpoint_column_name})) AS latest_timestamp FROM public.{self.table_name};"
+            self.cursor.execute(query)
+            return self.cursor.fetchone()[0]
+        except Exception as e:
+            log(f"Error in fetching max timestamp : {e} \n query : {query}")
    
+    # def __del__(self):
+    #     self.cursor.close()
+    #     self.connection.close()
 
     
 
@@ -143,11 +172,7 @@ class VectorLayerController:
             return self.vlayer.fields()
         return None
 
-    def delete_vlayer(self):
-        """
-        Delete the vector layer from the map.
-        """
-        pass
+
 
     def add_features(self, features_list):
         """
@@ -156,6 +181,11 @@ class VectorLayerController:
         if self.vlayer:
             self.vlayer.dataProvider().addFeatures(features_list)
 
+
+    def __del__(self):
+        if self.vlayer:
+            QgsProject.instance().removeMapLayer(self.vlayer)
+            self.vlayer = None
 
 
 
@@ -194,6 +224,7 @@ class initialize_qgis_features(QgsTask):
                 'srid' : srid
             }
         except Exception as e:
+            log(f"Error in fetching IDs and timestamps : {e}")
             self.error_msg = str(e)
             return False
         return True
@@ -201,10 +232,11 @@ class initialize_qgis_features(QgsTask):
 
 class fetch_time_delta_thread(QgsTask):
 
-    def __init__(self, description,project_title, database_connector, begin_timestamp, end_timestamp, finished_fnc, failed_fnc):
+    def __init__(self, description,project_title, database_connector, key, begin_timestamp, end_timestamp, finished_fnc, failed_fnc):
         super(fetch_time_delta_thread, self).__init__(description, QgsTask.CanCancel)
         self.project_title = project_title
         self.database_connector = database_connector
+        self.key = key
         self.begin_timestamp = begin_timestamp
         self.end_timestamp = end_timestamp
 
@@ -231,9 +263,10 @@ class fetch_time_delta_thread(QgsTask):
             # rows = self.db.get_tgeompoints(start_time, end_time, self.extent, self.srid, self.n_objects)
             tgeompoints = self.database_connector.get_TgeomPoints(self.begin_timestamp, self.end_timestamp, LIMIT)
             self.result_params = {
-                'TgeomPoints_list' : tgeompoints
+                'TgeomPoints_list' : (self.key, tgeompoints)
             }
         except Exception as e:
+            log(f"Error in fetching time delta TgeomPoints : {e}")
             self.error_msg = str(e)
             return False
         return True
@@ -245,15 +278,64 @@ class MobilitydbLayerHandler:
     """
     Initializes and handles a layer to view MobilityDB data.
     """
-    def __init__(self, iface, task_manager, srid, connection_parameters):
+    def __init__(self, iface, task_manager, database_controller):
         self.iface = iface
         self.task_manager = task_manager
-        self.database_controller = DatabaseController(connection_parameters)
+        self.database_controller = database_controller
         
         self.last_time_record = time.time()
         task = initialize_qgis_features("Fetching MobilityDB Data", "MobilityDB Data", self.database_controller, self.create_vector_layer, self.raise_error)
         self.task_manager.addTask(task)
+        self.key_to_assign = None
 
+    def reload_animation(self, begin_ts_1, end_ts_1, key2, begin_ts_2, end_ts_2):
+        self.previous_tpoints = None
+        self.current_tpoints = None
+        self.next_tpoints = None
+        self.next_begin_ts = begin_ts_2
+        self.next_end_ts = end_ts_2
+        self.key = key2 - 1
+        self.next_key = key2
+        self.last_time_record = time.time()
+        task = fetch_time_delta_thread(f"Fetching Time Delta {self.key}", "Move - MobilityDB", self.database_controller, self.key, begin_ts_1, end_ts_1, self.fetch_second_time_delta, self.raise_error)
+        self.task_manager.addTask(task)
+
+    def fetch_second_time_delta(self, result_params):
+        try:
+            self.TIME_time_delta_fetch = time.time() - self.last_time_record
+            log(f"Time taken to fetch time delta {self.key} TgeomPoints : {self.TIME_time_delta_fetch}")
+
+            self.current_tpoints = result_params['TgeomPoints_list']
+            self.fetch_time_delta(self.next_key, self.next_begin_ts, self.next_end_ts)
+
+        except Exception as e:
+            log(f"Error in fetch_second_time_delta : {e}")
+
+    def on_fetch_time_data_finished(self, result_params):
+        """
+        Callback function for the fetch data task.
+        """
+        try:
+            self.TIME_fetch_time_delta = time.time() - self.last_time_record
+
+            tpoints = result_params['TgeomPoints_list']
+            if self.key_to_assign is not None: 
+                self.key_to_assign = None
+                if self.key_to_assign == tpoints[0]:
+                    self.previous_tpoints = self.current_tpoints
+                    self.current_tpoints = tpoints
+                    self.next_tpoints = None
+                    log(f"Time taken to fetch time delta {tpoints[0]} TgeomPoints : {self.TIME_fetch_time_delta}")
+                else:
+                    # THIS SHOULD NOT HAPPEN THROW ERROR
+                    # raise(f"Error in switch_time_delta, given key {self.key_to_assign} does not match the next key {self.next_tpoints[0]}, error in temporal controller code, timeline was skipped")
+                    pass
+            else:
+                self.next_tpoints = tpoints
+                log(f"Time taken to fetch time delta {tpoints[0]} TgeomPoints : {self.TIME_fetch_time_delta}")
+            
+        except Exception as e:
+            log(f"Error in on_fetch_data_finished : {e}")
 
     def raise_error(self, msg):
         """
@@ -265,41 +347,42 @@ class MobilitydbLayerHandler:
             log("Unknown error")
 
 
-    def start_animation(self, begin_ts_1, end_ts_1, begin_ts_2, end_ts_2):
-        self.next_begin =  begin_ts_2
-        self.next_end = end_ts_2
+
+
+    def fetch_time_delta(self,key,  begin_ts, end_ts):
+        """
+        Fetch the TgeomPoints for the given time delta.
+        """
         self.last_time_record = time.time()
-        task = fetch_time_delta_thread("Fetching MobilityDB Data", "MobilityDB Data", self.database_controller, begin_ts_1, end_ts_1, self.initiate_animation, self.raise_error)
-        self.task_manager.addTask(task)
-    
-    def initiate_animation(self, result_params):
-        self.TIME_fetch_time_delta = time.time() - self.last_time_record
-        self.current_tpoints = result_params['TgeomPoints_list']
-        self.last_time_record
-        task = fetch_time_delta_thread("Fetching MobilityDB Data", "MobilityDB Data", self.database_controller, self.next_begin, self.next_end, self.on_fetch_time_data_finished, self.raise_error)
+        task = fetch_time_delta_thread(f"Fetching Time Delta {key}", "Move - MobilityDB", self.database_controller, key, begin_ts, end_ts, self.on_fetch_time_data_finished, self.raise_error)
         self.task_manager.addTask(task)
 
-    def fetch_time_delta(self, begin_ts, end_ts):
-        self.last_time_record = time.time()
-        task = fetch_time_delta_thread("Fetching MobilityDB Data", "MobilityDB Data", self.database_controller, begin_ts, end_ts, self.on_fetch_time_delta_finished, self.raise_error)
-        self.task_manager.addTask(task)
+    def switch_time_delta(self, key):
+        if self.next_tpoints is None:
+            #wait for the current task to finish
+            self.key_to_assign = key
+        else:
+            self.key_to_assign = None
+            if key == self.next_tpoints[0]:
+                self.previous_tpoints = self.current_tpoints
+                self.current_tpoints = self.next_tpoints
+                self.next_tpoints = None
+                self.key = key
+            else:
+                # THIS SHOULD NOT HAPPEN THROW ERROR
+                # raise(f"Error in switch_time_delta, given key {key} does not match the next key {self.next_tpoints[0]}, error in temporal controller code, timeline was skipped")
+                pass
 
-    def switch_time_delta(self, dir):
-        if dir == 0 :
-            self.previous_tpoints = self.current_tpoints
-            self.current_tpoints = self.next_tpoints
-            self.next_tpoints = None
-        else: # Direction changed
-            self.previous_tpoints = self.current_tpoints
-            self.current_tpoints = self.previous_tpoints
-            self.previous_tpoints = None
+
 
     def create_vector_layer(self, result_params):
         self.TIME_get_ids_timestamps = time.time() - self.last_time_record
         log(f"Time taken to fetch TgeomPoints : {self.TIME_get_ids_timestamps}")
-        log(f"Number of TgeomPoints fetched : {self.objects_count}")
-        srid = result_params['srid']
         ids_timestamps = result_params['Ids_timestamps']
+        self.objects_count = len(ids_timestamps)
+        srid = result_params['srid']
+        log(f"Number of TgeomPoints fetched : {self.objects_count} | SRID : {srid}")
+        
         self.vector_layer_controller = VectorLayerController(srid)
 
          
@@ -308,7 +391,7 @@ class MobilitydbLayerHandler:
         features_list = []
         self.geometries = {}
 
-        for i in range(1, len(ids_timestamps)+1):
+        for i in range(1, self.objects_count + 1):
             feature = QgsFeature(vlayer_fields)
             feature.setAttributes([ ids_timestamps[i-1][0], QDateTime(ids_timestamps[i-1][1]), QDateTime(ids_timestamps[i-1][2])])
             geom = QgsGeometry()
@@ -317,32 +400,8 @@ class MobilitydbLayerHandler:
             features_list.append(feature)
             
         self.vector_layer_controller.add_features(features_list)
-        
-    #     self.initiate_animation()
+    
 
-    # def initiate_animation(self):
-    #     """
-    #     fetch first time delta, and start the fetch for the next time delta
-    #     """
-    #     begin_frame = 0
-    #     end_frame = self.time_delta_size -1
-
-    #     self.last_time_record = time.time()
-    #     task = fetch_time_delta_thread("Fetching MobilityDB Data", "MobilityDB Data", self.database_controller, self.on_fetch_data_finished, self.raise_error)
-    #     self.task_manager.addTask(task)
-
-
-
-    def on_fetch_time_data_finished(self, result_params):
-        """
-        Callback function for the fetch data task.
-        """
-        try:
-            self.TIME_fetch_time_delta = time.time() - self.last_time_record
-            self.tpoints = result_params['TgeomPoints_list']
-            
-        except Exception as e:
-            log(f"Error in on_fetch_data_finished : {e}")
 
     def new_frame(self, timestamp):
         """
@@ -350,11 +409,11 @@ class MobilitydbLayerHandler:
         """
         log(f"New Frame : {timestamp}")
         hits = 0
+        tpoints = self.current_tpoints[1]
         for i in range(1, self.objects_count+1):
             # Fetching the position of the object at the current frame
             try:
-                
-                position = self.tpoints[i].value_at_timestamp(timestamp)
+                position = tpoints[i-1][0].value_at_timestamp(timestamp)
                 # Updating the geometry of the feature in the vector layer
                 self.geometries[i].fromWkb(position.wkb) # = QgsGeometry.fromWkt(position.wkt)
                 hits+=1
@@ -377,9 +436,14 @@ class Move:
         self.task_manager = QgsTaskManager()
         self.canvas = self.iface.mapCanvas()
         self.temporal_controller = self.canvas.temporalController()
-        self.temporal_controller.updateTemporalRange.connect(self.on_new_frame)
         self.frame = 0
-        self.navigationMode = self.temporal_controller.setNavigationMode(QgsTemporalNavigationObject.NavigationMode.Animated)
+        self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Animated 
+        self.temporal_controller.setNavigationMode(QgsTemporalNavigationObject.NavigationMode.Animated)
+        self.frameDuration = self.temporal_controller.frameDuration()
+        self.temporalExtents = self.temporal_controller.temporalExtents()
+        self.total_frames = self.temporal_controller.totalFrameCount()
+        self.temporal_controller.updateTemporalRange.connect(self.on_new_frame)
+
         # States for NavigationMode etc
         self.time_delta_size = TIME_DELTA_SIZE 
         # self.mobilitydb_layers= []
@@ -397,86 +461,135 @@ class Move:
                 'tpoint_column_name': TPOINT_COLUMN_NAME,
             }
 
-        self.mobilitydb_layer_handler = MobilitydbLayerHandler(self.iface, self.task_manager, SRID, connection_parameters)
+        self.database_controller = DatabaseController(connection_parameters)
+        time_range = QgsDateTimeRange(self.database_controller.get_min_timestamp(), self.database_controller.get_max_timestamp())
+        self.temporal_controller.setTemporalExtents(time_range)
+        self.mobilitydb_layer_handler = MobilitydbLayerHandler(self.iface, self.task_manager, self.database_controller)
         self.launch_animation()
+        # print(f"State of the temporal controller : ")
+        # print(f"TotalFrameCount : {self.temporal_controller.totalFrameCount()}")
+        # print(f"temporalRangeCumulative : {self.temporal_controller.temporalRangeCumulative()}")
+        # print(f"temporalExtents : {self.temporal_controller.temporalExtents()}")
+        # print(f"NavigationMode : {self.temporal_controller.navigationMode()}")
+        # print(f"isLooping : {self.temporal_controller.isLooping()}")
+        # print(f"FPS : {self.temporal_controller.framesPerSecond()}")
+        # print(f"Frame duration : {self.temporal_controller.frameDuration()}")
+        # print(f"Available temporal range : {self.temporal_controller.availableTemporalRanges()}")
+        # print(f"Animation state : {self.temporal_controller.animationState()}")
+
+        # print(f"Current Frame : {self.temporal_controller.currentFrameNumber()}")
+
+        # print("Executing")
 
 
-    def launch_animation(self):
-        self.current_time_delta_key = 0
-        self.current_time_delta_end = self.time_delta_size - 1
+    def launch_animation(self, key=0):
+        # self.task_manager.cancelAll() # Cancel all tasks and reload the time deltas
 
-        self.total_frames = self.temporal_controller.totalFrameCount()
-        self.tdelta_change = False
+        self.key = key
         
-        begin_frame = self.current_time_delta_key
-        end_frame = self.current_time_delta_end 
+        begin_frame = self.key*self.time_delta_size
+        end_frame = (begin_frame + self.time_delta_size) - 1
         
         begin_ts_1 = self.temporal_controller.dateTimeRangeForFrameNumber(begin_frame).begin().toPyDateTime()
         end_ts_1 = self.temporal_controller.dateTimeRangeForFrameNumber(end_frame).begin().toPyDateTime()
         
-        begin_ts_2 = self.temporal_controller.dateTimeRangeForFrameNumber(begin_frame + self.time_delta_size).begin().toPyDateTime()
-        end_ts_2 = self.temporal_controller.dateTimeRangeForFrameNumber(end_frame + self.time_delta_size).begin().toPyDateTime()
-        
-        self.mobilitydb_layer_handler.start_animation(begin_ts_1, end_ts_1, begin_ts_2, end_ts_2)
+        self.begin_frame = begin_frame + self.time_delta_size
+        self.end_frame = end_frame + self.time_delta_size
 
+        begin_ts_2 = self.temporal_controller.dateTimeRangeForFrameNumber(self.begin_frame).begin().toPyDateTime()
+        end_ts_2 = self.temporal_controller.dateTimeRangeForFrameNumber(self.end_frame).begin().toPyDateTime()
+        
+        key2 = self.key + 1
+        self.direction = True # Forward
+        self.mobilitydb_layer_handler.reload_animation(begin_ts_1, end_ts_1, key2, begin_ts_2, end_ts_2)
+
+        # print(f" Launch animation \n First time delta : {begin_frame} to {end_frame} | {begin_ts_1} to {end_ts_1}  \n Second time delta: {self.begin_frame} to {self.end_frame} | {begin_ts_2} to {end_ts_2} ")
 
 
 
     def update_layers(self, current_frame):
         self.mobilitydb_layer_handler.new_frame( self.temporal_controller.dateTimeRangeForFrameNumber(current_frame).begin().toPyDateTime())
+        # print(f"Update geometries for frame : {current_frame} with key {self.key}")
 
+    def switch_time_deltas(self):
+        # self.mobilitydb_layer_handler.switch_time_delta()
+        if self.direction:
+            self.mobilitydb_layer_handler.switch_time_delta(self.key+1)
+            # print(f"After switch previous key : {self.key} | current key : {self.key+1} | next key : {self.key+2}")
+            self.key += 1
+        else:
+            self.mobilitydb_layer_handler.switch_time_delta(self.key-1)
+            # print(f"After switch previous key : {self.key} | current key : {self.key-1} | next key : {self.key-2}")
+            self.key -= 1
+        # print("Switch Time Deltas(if current_key does not exist, load 2 time deltas : current and future in the current direction)")
 
-    def fetch_next_time_deltas(self, begin_frame, end_frame):
+    def fetch_next_time_deltas(self,key, begin_frame, end_frame):
         begin_ts = self.temporal_controller.dateTimeRangeForFrameNumber(begin_frame).begin().toPyDateTime()
         end_ts = self.temporal_controller.dateTimeRangeForFrameNumber(end_frame).begin().toPyDateTime()
-        self.mobilitydb_layer_handler.fetch_time_delta(begin_ts, end_ts)
+        self.mobilitydb_layer_handler.fetch_time_delta(key, begin_ts, end_ts)
+        # print(f"Fetching Next Time Deltas : {begin_frame} to {end_frame} | {begin_ts} to {end_ts}")
 
 
 
     def on_new_frame(self):
-        log("New Frame")
+        recommended_fps_time = time.time()
         # Verify which signal is emitted
         next_frame= self.frame + 1
         previous_frame= self.frame - 1
 
         current_frame = self.temporal_controller.currentFrameNumber()
+        is_forward = (current_frame == next_frame)
+        is_backward = (current_frame == previous_frame)
 
-        if current_frame == next_frame or current_frame == previous_frame:
+        # print(f"Current Frame : {current_frame} | Next Frame : {next_frame} | Previous Frame : {previous_frame} | Forward : {is_forward} | Backward : {is_backward}")
+
+        if (is_forward or is_backward ) and (self.navigationMode == QgsTemporalNavigationObject.NavigationMode.Animated):
+            # print("!!! Signal came from Frame change")
             self.frame = current_frame
             
-            if self.frame % self.time_delta_size == 0:
-                if self.frame == next_frame:
-                    if self.current_time_delta_end + 1 != self.total_frames:
-                        self.current_time_delta_key = self.frame
-                        self.current_time_delta_end = self.frame + self.time_delta_size - 1
-                        self.mobilitydb_layer_handler.shift_time_deltas(0)
+            key = self.frame // self.time_delta_size
+            
+            if is_forward:
+                if self.direction: # Stays in the same direction
+                    if key == self.key + 1 and ((self.end_frame + self.time_delta_size) < self.total_frames): # Fetch Next time delta
+                        self.switch_time_deltas()                        
+                        self.begin_frame = self.begin_frame + self.time_delta_size
+                        self.end_frame = self.end_frame + self.time_delta_size
+                        self.fetch_next_time_deltas(self.key+1,self.begin_frame, self.end_frame)
+                        # print(f"forward -> same direction -> next time delta : {self.begin_frame} to {self.end_frame} | direction {self.direction}")
 
-                        if self.task_manager.countActiveTasks() != 0:
-                            self.temporal_controller.pause()
-
-                        self.fetch_next_time_deltas()
-                        self.update_layers(self.frame)
-                        self.tdelta_change = True
-                else: 
+                    elif key != self.key: # User has skipped through the time line, reload 2 time deltas 
+                        self.launch_animation(key)
+                        # print(f"forward -> same direction -> skipped timeline : {self.begin_frame} to {self.end_frame} | direction {self.direction}")
+                    
                     self.update_layers(self.frame)
-                    if self.current_time_delta_key != 0:
-                        self.current_time_delta_key = self.current_time_delta_key - self.time_delta_size
-                        self.current_time_delta_end = self.frame - 1
+                    log(f"FPS recommendation : {1/(time.time() - recommended_fps_time)}")
+                        
+                else: # Direction changed
+                    # TODO : Reset the Buffer of time deltas
+                    self.direction = True # Reverse
+                    # print(f"forward -> direction has changed ! : {self.begin_frame} to {self.end_frame} | direction {self.direction}")
+                    pass
 
-                        self.mobilitydb_layer_handler.shift_time_deltas(1)
-                        if self.task_manager.countActiveTasks() != 0:
-                            self.temporal_controller.pause()
+            elif is_backward:
+                if not self.direction: # Stays in the same direction
+                    if key == self.key - 1 and (self.begin_frame - self.time_delta_size >= 0): # Fetch Next time delta
+                        self.switch_time_deltas()
+                        self.begin_frame = self.begin_frame - self.time_delta_size
+                        self.end_frame = self.end_frame - self.time_delta_size
+                        self.fetch_next_time_deltas(self.key-1, self.begin_frame, self.end_frame)
+                        # print(f"backward -> same direction -> next time delta : {self.begin_frame} to {self.end_frame} | direction {self.direction}")
 
-                        self.fetch_next_time_deltas()
-                        self.tdelta_change = True
-            else:
-                if self.tdelta_change:
-                    if self.frame < self.current_time_delta_key:
-                        self.current_time_delta_key = self.current_time_delta_key - self.time_delta_size
-                        self.current_time_delta_end = self.frame
-                        self.tdelta_change = False
-                self.update_layers(self.frame)
-                self.tdelta_change = False
+                    elif key != self.key: # User has skipped through the time line, reload 2 time deltas
+                        self.launch_animation(key) # TODO: Currently we assume it is a forward direction
+                        # print(f"backward -> same direction -> skipped timeline : {self.begin_frame} to {self.end_frame} | direction {self.direction}")
+                    self.update_layers(self.frame)
+                    log(f"FPS recommendation : {1/(time.time() - recommended_fps_time)}")
+                else: # Direction changed
+                    # TODO : Reset the Buffer of time deltas
+                    self.direction = False # Forward
+                    # print(f"backward -> direction has changed ! : {self.begin_frame} to {self.end_frame}  | direction {self.direction} ")
+                    pass
 
             
         else:
@@ -490,7 +603,60 @@ class Move:
             -Cumulative FPS change
             - Verify if other scenario also trigger this signal
 
-            """
-            pass
+            """ 
+            # print("\n\n#### Signal is not for frame change ####\n\n")
+            # print(f"TotalFrameCount : {self.temporal_controller.totalFrameCount()}")
+            # print(f"temporalRangeCumulative : {self.temporal_controller.temporalRangeCumulative()}")
+            # print(f"temporalExtents : {self.temporal_controller.temporalExtents()}")
+            # print(f"NavigationMode : {self.temporal_controller.navigationMode()}")
+            # print(f"isLooping : {self.temporal_controller.isLooping()}")
+            # print(f"FPS : {self.temporal_controller.framesPerSecond()}")
+            # print(f"Frame duration : {self.temporal_controller.frameDuration()}")
+            # print(f"Available temporal range : {self.temporal_controller.availableTemporalRanges()}")
+            # print(f"Animation state : {self.temporal_controller.animationState()}")
+    
+            # print(f"Current Frame : {self.temporal_controller.currentFrameNumber()}")
 
+            if self.temporal_controller.navigationMode() != self.navigationMode: # Navigation Mode change -> For now only allow animated mode
+                if self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Animated:
+                    self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Animated
+                    # print("Navigation Mode Animated")
+                elif self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Disabled:
+                    self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Disabled
+                    # print("Navigation Mode Disabled")
+                elif self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Movie:
+                    self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Movie
+                    # print("Navigation Mode Movie")
+                elif self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.FixedRange:
+                    self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Animated
+                    # print("Navigation Mode FixedRange")
+
+
+            elif self.temporal_controller.frameDuration() != self.frameDuration: # Frame duration change ==> Restart animation
+                # print(f"Frame duration has changed from {self.frameDuration} with {self.total_frames} frames")
+                self.frameDuration = self.temporal_controller.frameDuration()
+                self.total_frames = self.temporal_controller.totalFrameCount()
+                # print(f"to {self.frameDuration} with {self.total_frames} frames")
+
+                # print(f"Delete all time deltas from layers, reload 2 time deltas for the current key ") # TODO : even load 3 time deltas ? to allow both directions for the user.
+                self.reload_time_deltas()
+            
+            elif self.temporal_controller.temporalExtents() != self.temporalExtents:
+                # print(f"temporal extents have changed from {self.temporalExtents} with {self.total_frames} frames")
+                self.temporalExtents = self.temporal_controller.temporalExtents()
+                self.total_frames = self.temporal_controller.totalFrameCount()
+                # print(f"to {self.temporalExtents} with {self.total_frames} frames")   
+            else:
+                # Not handled : FPS change/cumulative range(no signal sent), animation state => Not handled, loop state => Not handled
+                pass
+
+
+    def reload_time_deltas(self):
+        self.frame = self.temporal_controller.currentFrameNumber()
+        self.key = self.frame // self.time_delta_size
+        # self.movelayer_handler.delete_all_time_deltas()
+        # print("Reload Time deltas")
+        self.task_manager.cancelAll()
+        self.launch_animation(self.key)
+        
 tt = Move()

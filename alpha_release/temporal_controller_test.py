@@ -15,7 +15,8 @@ class Move:
         self.canvas = self.iface.mapCanvas()
         self.temporal_controller = self.canvas.temporalController()
         self.frame = 0
-        self.navigationMode = self.temporal_controller.setNavigationMode(QgsTemporalNavigationObject.NavigationMode.Animated)
+        self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Animated 
+        self.temporal_controller.setNavigationMode(QgsTemporalNavigationObject.NavigationMode.Animated)
         self.frameDuration = self.temporal_controller.frameDuration()
         self.temporalExtents = self.temporal_controller.temporalExtents()
         self.total_frames = self.temporal_controller.totalFrameCount()
@@ -40,6 +41,19 @@ class Move:
 
         # self.mobilitydb_layer_handler = MobilitydbLayerHandler(self.iface, self.task_manager, SRID, connection_parameters)
         self.launch_animation()
+        print(f"State of the temporal controller : ")
+        print(f"TotalFrameCount : {self.temporal_controller.totalFrameCount()}")
+        print(f"temporalRangeCumulative : {self.temporal_controller.temporalRangeCumulative()}")
+        print(f"temporalExtents : {self.temporal_controller.temporalExtents()}")
+        print(f"NavigationMode : {self.temporal_controller.navigationMode()}")
+        print(f"isLooping : {self.temporal_controller.isLooping()}")
+        print(f"FPS : {self.temporal_controller.framesPerSecond()}")
+        print(f"Frame duration : {self.temporal_controller.frameDuration()}")
+        print(f"Available temporal range : {self.temporal_controller.availableTemporalRanges()}")
+        print(f"Animation state : {self.temporal_controller.animationState()}")
+
+        print(f"Current Frame : {self.temporal_controller.currentFrameNumber()}")
+
         print("Executing")
 
 
@@ -58,8 +72,9 @@ class Move:
         begin_ts_2 = self.temporal_controller.dateTimeRangeForFrameNumber(self.begin_frame).begin().toPyDateTime()
         end_ts_2 = self.temporal_controller.dateTimeRangeForFrameNumber(self.end_frame).begin().toPyDateTime()
         
+        key2 = self.key + 1
         self.direction = True # Forward
-        # self.mobilitydb_layer_handler.start_animation(begin_ts_1, end_ts_1, begin_ts_2, end_ts_2)
+        # self.mobilitydb_layer_handler.start_animation(begin_ts_1, end_ts_1, key2, begin_ts_2, end_ts_2)
 
         print(f" Launch animation \n First time delta : {begin_frame} to {end_frame} | {begin_ts_1} to {end_ts_1}  \n Second time delta: {self.begin_frame} to {self.end_frame} | {begin_ts_2} to {end_ts_2} ")
 
@@ -67,11 +82,19 @@ class Move:
 
     def update_layers(self, current_frame):
         # self.mobilitydb_layer_handler.new_frame( self.temporal_controller.dateTimeRangeForFrameNumber(current_frame).begin().toPyDateTime())
-        print(f"Update geometries for frame : {current_frame}")
+        print(f"Update geometries for frame : {current_frame} with key {self.key}")
 
     def switch_time_deltas(self):
         # self.mobilitydb_layer_handler.switch_time_delta()
-        print("Switch Time Deltas")
+        if self.direction:
+            # self.move_layer_handler.switch_time_delta(self.key+1)
+            print(f"After switch previous key : {self.key} | current key : {self.key+1} | next key : {self.key+2}")
+            self.key += 1
+        else:
+            # self.move_layer_handler.switch_time_delta(self.key-1)
+            print(f"After switch previous key : {self.key} | current key : {self.key-1} | next key : {self.key-2}")
+            self.key -= 1
+        print("Switch Time Deltas(if current_key does not exist, load 2 time deltas : current and future in the current direction)")
 
     def fetch_next_time_deltas(self, begin_frame, end_frame):
         begin_ts = self.temporal_controller.dateTimeRangeForFrameNumber(begin_frame).begin().toPyDateTime()
@@ -101,7 +124,6 @@ class Move:
             if is_forward:
                 if self.direction: # Stays in the same direction
                     if key == self.key + 1 and ((self.end_frame + self.time_delta_size) < self.total_frames): # Fetch Next time delta
-                        self.key = key
                         self.switch_time_deltas()                        
                         self.begin_frame = self.begin_frame + self.time_delta_size
                         self.end_frame = self.end_frame + self.time_delta_size
