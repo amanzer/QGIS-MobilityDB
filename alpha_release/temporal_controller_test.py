@@ -85,16 +85,8 @@ class Move:
         print(f"Update geometries for frame : {current_frame} with key {self.key}")
 
     def switch_time_deltas(self):
-        # self.mobilitydb_layer_handler.switch_time_delta()
-        if self.direction:
-            # self.move_layer_handler.switch_time_delta(self.key+1)
-            print(f"After switch previous key : {self.key} | current key : {self.key+1} | next key : {self.key+2}")
-            self.key += 1
-        else:
-            # self.move_layer_handler.switch_time_delta(self.key-1)
-            print(f"After switch previous key : {self.key} | current key : {self.key-1} | next key : {self.key-2}")
-            self.key -= 1
-        print("Switch Time Deltas(if current_key does not exist, load 2 time deltas : current and future in the current direction)")
+        print(f"switch time deltas, current key : {self.key}")
+      
 
     def fetch_next_time_deltas(self, begin_frame, end_frame):
         begin_ts = self.temporal_controller.dateTimeRangeForFrameNumber(begin_frame).begin().toPyDateTime()
@@ -105,6 +97,7 @@ class Move:
 
 
     def on_new_frame(self):
+        print(f"$$start")
         # Verify which signal is emitted
         next_frame= self.frame + 1
         previous_frame= self.frame - 1
@@ -113,7 +106,7 @@ class Move:
         is_forward = (current_frame == next_frame)
         is_backward = (current_frame == previous_frame)
 
-        print(f"Current Frame : {current_frame} | Next Frame : {next_frame} | Previous Frame : {previous_frame} | Forward : {is_forward} | Backward : {is_backward}")
+        print(f"Call variables :\nCurrent Frame : {current_frame} | Next Frame : {next_frame} | Previous Frame : {previous_frame} | Forward : {is_forward} | Backward : {is_backward} | direction {self.direction}")
 
         if (is_forward or is_backward ) and (self.navigationMode == QgsTemporalNavigationObject.NavigationMode.Animated):
             print("!!! Signal came from Frame change")
@@ -124,15 +117,16 @@ class Move:
             if is_forward:
                 if self.direction: # Stays in the same direction
                     if key == self.key + 1 and ((self.end_frame + self.time_delta_size) < self.total_frames): # Fetch Next time delta
+                        self.key = key
                         self.switch_time_deltas()                        
                         self.begin_frame = self.begin_frame + self.time_delta_size
                         self.end_frame = self.end_frame + self.time_delta_size
                         self.fetch_next_time_deltas(self.begin_frame, self.end_frame)
-                        print(f"forward -> same direction -> next time delta : {self.begin_frame} to {self.end_frame} | direction {self.direction}")
+                        print(f"forward -> same direction -> next time delta : {self.begin_frame} to {self.end_frame} | direction {self.direction} |self.key : {self.key} ")
 
-                    elif key != self.key: # User has skipped through the time line, reload 2 time deltas 
-                        self.launch_animation(key)
-                        print(f"forward -> same direction -> skipped timeline : {self.begin_frame} to {self.end_frame} | direction {self.direction}")
+                    # elif key != self.key: # User has skipped through the time line, reload 2 time deltas 
+                    #     self.launch_animation(key)
+                    #     print(f"forward -> same direction -> skipped timeline : {self.begin_frame} to {self.end_frame} | direction {self.direction} |self.key : {self.key} ")
                     
                     self.update_layers(self.frame)
                         
@@ -145,15 +139,16 @@ class Move:
             elif is_backward:
                 if not self.direction: # Stays in the same direction
                     if key == self.key - 1 and (self.begin_frame - self.time_delta_size >= 0): # Fetch Next time delta
+                        self.key = key
                         self.switch_time_deltas()
                         self.begin_frame = self.begin_frame - self.time_delta_size
                         self.end_frame = self.end_frame - self.time_delta_size
                         self.fetch_next_time_deltas(self.begin_frame, self.end_frame)
-                        print(f"backward -> same direction -> next time delta : {self.begin_frame} to {self.end_frame} | direction {self.direction}")
+                        print(f"backward -> same direction -> next time delta : {self.begin_frame} to {self.end_frame} | direction {self.direction} |self.key : {self.key} ")
 
-                    elif key != self.key: # User has skipped through the time line, reload 2 time deltas
-                        self.launch_animation(key) # TODO: Currently we assume it is a forward direction
-                        print(f"backward -> same direction -> skipped timeline : {self.begin_frame} to {self.end_frame} | direction {self.direction}")
+                    # elif key != self.key: # User has skipped through the time line, reload 2 time deltas
+                    #     self.launch_animation(key) # TODO: Currently we assume it is a forward direction
+                    #     print(f"backward -> same direction -> skipped timeline : {self.begin_frame} to {self.end_frame} | direction {self.direction} |self.key : {self.key} ")
                     self.update_layers(self.frame)
                 else: # Direction changed
                     # TODO : Reset the Buffer of time deltas
@@ -218,7 +213,14 @@ class Move:
                 print(f"to {self.temporalExtents} with {self.total_frames} frames")   
             else:
                 # Not handled : FPS change/cumulative range(no signal sent), animation state => Not handled, loop state => Not handled
-                pass
+                
+                # Currently we assume this just means the user has skipped through the timeline
+                key = current_frame // self.time_delta_size
+                if key != self.key:
+                    self.reload_time_deltas()
+                    print(f"Reload time deltas for the new key {key}")
+                else:
+                    print("timeline skipped in the same key")
 
 
     def reload_time_deltas(self):

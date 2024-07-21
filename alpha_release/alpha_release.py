@@ -20,20 +20,20 @@ import time
 
 
 
-# SRID = 4326
-# ########## AIS Danish maritime dataset ##########
-# DATABASE_NAME = "mobilitydb"
-# TPOINT_TABLE_NAME = "PyMEOS_demo_500"
-# TPOINT_ID_COLUMN_NAME = "MMSI"
-# TPOINT_COLUMN_NAME = "trajectory"
-
-
-SRID = 3857
+SRID = 4326
 ########## AIS Danish maritime dataset ##########
-DATABASE_NAME = "stib"
-TPOINT_TABLE_NAME = "trips_mdb"
-TPOINT_ID_COLUMN_NAME = "trip_id"
-TPOINT_COLUMN_NAME = "trip"
+DATABASE_NAME = "mobilitydb"
+TPOINT_TABLE_NAME = "PyMEOS_demo"
+TPOINT_ID_COLUMN_NAME = "MMSI"
+TPOINT_COLUMN_NAME = "trajectory"
+
+
+# SRID = 3857
+# ########## AIS Danish maritime dataset ##########
+# DATABASE_NAME = "stib"
+# TPOINT_TABLE_NAME = "trips_mdb"
+# TPOINT_ID_COLUMN_NAME = "trip_id"
+# TPOINT_COLUMN_NAME = "trip"
 
 
 
@@ -300,6 +300,7 @@ class Move:
         self.mobilitydb_layers.append(layer)
 
     def on_new_frame(self):
+        recommended_fps_time=time.time()
         log("New Frame")
         # Verify which signal is emitted
         next_frame= self.frame + 1
@@ -311,6 +312,9 @@ class Move:
             self.frame = current_frame
             for layer in self.mobilitydb_layers:
                 layer.new_frame( self.temporal_controller.dateTimeRangeForFrameNumber(current_frame).begin().toPyDateTime())
+            fps = 1/(time.time()-recommended_fps_time)
+            log(f"FPS : {fps}")
+            self.temporal_controller.setFramesPerSecond(fps)
         else:
             self.frame = current_frame
             """
