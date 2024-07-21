@@ -65,18 +65,26 @@ class DatabaseController:
     def get_TgeomPoints(self):
         try:
             query = f"""
-            SELECT {self.id_column_name}, {self.tpoint_column_name}, startTimestamp({self.tpoint_column_name}), endTimestamp({self.tpoint_column_name}) FROM public.{self.table_name} LIMIT 100000 ;
+            SELECT {self.id_column_name}, {self.tpoint_column_name}, startTimestamp({self.tpoint_column_name}), endTimestamp({self.tpoint_column_name}) FROM public.{self.table_name} LIMIT 60000 ;
             """
             log(f"Query : {query}")
             self.connection = MobilityDB.connect(**self.connection_params)
             self.cursor = self.connection.cursor()
+            # self.cursor.arraysize = 100000 
             self.cursor.execute(query)
-            res = self.cursor.fetchall()
+
+            results= []
+            while True:
+                rows = self.cursor.fetchmany(1000)
+                if not rows:
+                    break
+                results.extend(rows)
+            # res = self.cursor.fetchall()
 
             self.cursor.close()
             self.connection.close()
 
-            return res
+            return results
         except Exception as e:
             log(f"Error in fetching TgeomPoints : {e}")
             return None
@@ -166,13 +174,9 @@ class fetch_data_thread(QgsTask):
             # rows = self.db.get_tgeompoints(start_time, end_time, self.extent, self.srid, self.n_objects)
             results = self.database_connector.get_TgeomPoints()
 
-            tgeompoints = {} 
-            for rows in results:
-                tgeompoints[rows[0]] = rows[1:]
 
-            
             self.result_params = {
-                'TgeomPoints_list' : tgeompoints
+                'TgeomPoints_list' : results
             }
         except Exception as e:
             self.error_msg = str(e)
@@ -212,32 +216,39 @@ class MobilitydbLayerHandler:
         """
         try:
             self.TIME_fetch_tgeompoints = time.time() - self.last_time_record
-            self.tgeompoints = result_params['TgeomPoints_list']
-            
+            results = result_params['TgeomPoints_list']
+            log(f"len of results : {len(results)}")
+
+            # self.tgeompoints = {}
+
             vlayer_fields=  self.vector_layer_controller.get_vlayer_fields()
 
             features_list = []
             self.geometries = {}
             self.tpoints = {}
             index = 1
-            for key, value in self.tgeompoints.items():
-                if value[1] == None :
-                    log(f"None value found for key : {key}")
-                    continue
-                feature = QgsFeature(vlayer_fields)
-                feature.setAttributes([ key, QDateTime(value[1]), QDateTime(value[2])])
-                geom = QgsGeometry()
-                self.geometries[index] = geom
-                feature.setGeometry(geom)
-                features_list.append(feature)
-                self.tpoints[index] = value[0]
-                index += 1
+            try:
+                for row in results:
+                    self.tpoints[index] = row[1]
+                    feature = QgsFeature(vlayer_fields)
+                    feature.setAttributes([row[0], QDateTime(row[2]), QDateTime(row[3])])
+                    geom = QgsGeometry()
+                    self.geometries[index] = geom
+                    feature.setGeometry(geom)
+                    features_list.append(feature)
+                    
+                    index += 1
 
-            self.vector_layer_controller.add_features(features_list)
-            self.objects_count = len(self.tgeompoints)
-            log(f"Time taken to fetch TgeomPoints : {self.TIME_fetch_tgeompoints}")
-            log(f"Number of TgeomPoints fetched : {self.objects_count}")
-            iface.messageBar().pushMessage("Info", "TGeomPoints have been loaded", level=Qgis.Info)
+
+                self.vector_layer_controller.add_features(features_list)
+                self.objects_count = index - 1
+                log(f"Time taken to fetch TgeomPoints : {self.TIME_fetch_tgeompoints}")
+                log(f"Number of TgeomPoints fetched : {self.objects_count}")
+                results = None # Freeing the memory
+                iface.messageBar().pushMessage("Info", "TGeomPoints have been loaded", level=Qgis.Info)
+            except Exception as e:
+                log(f"Error in creating features : {e} \n row : {row} \n index : {index}")
+                
         except Exception as e:
             log(f"Error in on_fetch_data_finished : {e}")
 
