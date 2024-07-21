@@ -15,25 +15,25 @@ from pymeos.db.psycopg import MobilityDB
 from pymeos import *
 import time
 
+from shapely.geometry import Point
 
 
 
 
-
-SRID = 4326
-########## AIS Danish maritime dataset ##########
-DATABASE_NAME = "mobilitydb"
-TPOINT_TABLE_NAME = "PyMEOS_demo"
-TPOINT_ID_COLUMN_NAME = "MMSI"
-TPOINT_COLUMN_NAME = "trajectory"
-
-
-# SRID = 3857
+# SRID = 4326
 # ########## AIS Danish maritime dataset ##########
-# DATABASE_NAME = "stib"
-# TPOINT_TABLE_NAME = "trips_mdb"
-# TPOINT_ID_COLUMN_NAME = "trip_id"
-# TPOINT_COLUMN_NAME = "trip"
+# DATABASE_NAME = "mobilitydb"
+# TPOINT_TABLE_NAME = "PyMEOS_demo"
+# TPOINT_ID_COLUMN_NAME = "MMSI"
+# TPOINT_COLUMN_NAME = "trajectory"
+
+
+SRID = 3857
+########## AIS Danish maritime dataset ##########
+DATABASE_NAME = "stib"
+TPOINT_TABLE_NAME = "trips_mdb"
+TPOINT_ID_COLUMN_NAME = "trip_id"
+TPOINT_COLUMN_NAME = "trip"
 
 
 
@@ -237,6 +237,7 @@ class MobilitydbLayerHandler:
             self.objects_count = len(self.tgeompoints)
             log(f"Time taken to fetch TgeomPoints : {self.TIME_fetch_tgeompoints}")
             log(f"Number of TgeomPoints fetched : {self.objects_count}")
+            iface.messageBar().pushMessage("Info", "TGeomPoints have been loaded", level=Qgis.Info)
         except Exception as e:
             log(f"Error in on_fetch_data_finished : {e}")
 
@@ -246,6 +247,7 @@ class MobilitydbLayerHandler:
         """
         log(f"New Frame : {timestamp}")
         hits = 0
+        empty_geom = Point().wkb
         for i in range(1, self.objects_count+1):
             # Fetching the position of the object at the current frame
             try:
@@ -255,7 +257,7 @@ class MobilitydbLayerHandler:
                 self.geometries[i].fromWkb(position.wkb) # = QgsGeometry.fromWkt(position.wkt)
                 hits+=1
             except:
-                continue
+                self.geometries[i].fromWkb(empty_geom)
         log(f"Number of hits : {hits}")
         self.vector_layer_controller.vlayer.startEditing()
         self.vector_layer_controller.vlayer.dataProvider().changeGeometryValues(self.geometries)
@@ -273,6 +275,13 @@ class Move:
         self.task_manager = QgsTaskManager()
         self.canvas = self.iface.mapCanvas()
         self.temporal_controller = self.canvas.temporalController()
+
+        self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Animated 
+        self.temporal_controller.setNavigationMode(QgsTemporalNavigationObject.NavigationMode.Animated)
+        self.frameDuration = self.temporal_controller.frameDuration()
+        self.temporalExtents = self.temporal_controller.temporalExtents()
+        self.total_frames = self.temporal_controller.totalFrameCount()
+        self.cumulativeRange = self.temporal_controller.temporalRangeCumulative()
         self.temporal_controller.updateTemporalRange.connect(self.on_new_frame)
         self.frame = 0
         self.navigationMode = self.temporal_controller.setNavigationMode(QgsTemporalNavigationObject.NavigationMode.Animated)
@@ -300,8 +309,9 @@ class Move:
         self.mobilitydb_layers.append(layer)
 
     def on_new_frame(self):
+        log(f"$$start")
         recommended_fps_time=time.time()
-        log("New Frame")
+
         # Verify which signal is emitted
         next_frame= self.frame + 1
         previous_frame= self.frame - 1
@@ -326,7 +336,55 @@ class Move:
             -Cumulative FPS change
             - Verify if other scenario also trigger this signal
 
-            """
-            pass
+            """ 
+            log("\n\n#### Signal is not for frame change ####\n\n")
+            log(f"TotalFrameCount : {self.temporal_controller.totalFrameCount()}")
+            log(f"temporalRangeCumulative : {self.temporal_controller.temporalRangeCumulative()}")
+            log(f"temporalExtents : {self.temporal_controller.temporalExtents()}")
+            log(f"NavigationMode : {self.temporal_controller.navigationMode()}")
+            log(f"isLooping : {self.temporal_controller.isLooping()}")
+            log(f"FPS : {self.temporal_controller.framesPerSecond()}")
+            log(f"Frame duration : {self.temporal_controller.frameDuration()}")
+            log(f"Available temporal range : {self.temporal_controller.availableTemporalRanges()}")
+            log(f"Animation state : {self.temporal_controller.animationState()}")
+    
+            log(f"Current Frame : {self.temporal_controller.currentFrameNumber()}")
+
+            # self.temporal_controller.pause()
+            iface.messageBar().pushMessage("Info", "Temporal Controller settings where changed", level=Qgis.Info)
+
+            if self.temporal_controller.navigationMode() != self.navigationMode: # Navigation Mode change -> For now only allow animated mode
+                if self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Animated:
+                    self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Animated
+                    log("Navigation Mode Animated")
+                elif self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Disabled:
+                    self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Disabled
+                    log("Navigation Mode Disabled")
+                elif self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Movie:
+                    self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Movie
+                    log("Navigation Mode Movie")
+                elif self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.FixedRange:
+                    self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Animated
+                    log("Navigation Mode FixedRange")
+
+
+            elif self.temporal_controller.frameDuration() != self.frameDuration: # Frame duration change ==> Restart animation
+                # log(f"Frame duration has changed from {self.frameDuration} with {self.total_frames} frames")
+                self.frameDuration = self.temporal_controller.frameDuration()
+                self.total_frames = self.temporal_controller.totalFrameCount()
+                log(f"to {self.frameDuration} with {self.total_frames} frames")
+
+            elif self.temporal_controller.temporalExtents() != self.temporalExtents:
+                log(f"temporal extents have changed from {self.temporalExtents} with {self.total_frames} frames")
+                self.temporalExtents = self.temporal_controller.temporalExtents()
+                self.total_frames = self.temporal_controller.totalFrameCount()
+                log(f"to {self.temporalExtents} with {self.total_frames} frames")   
+            elif self.temporal_controller.temporalRangeCumulative() != self.cumulativeRange:
+                log(f"Cumulative range has changed from {self.cumulativeRange}")
+                self.cumulativeRange = self.temporal_controller.temporalRangeCumulative()
+                log(f"to {self.cumulativeRange}")
+            else:
+                # Not handled : FPS change/cumulative range(no signal sent), animation state => Not handled, loop state => Not handled
+                log("Unhandled signal")
 
 tt = Move()

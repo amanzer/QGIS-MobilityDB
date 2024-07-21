@@ -334,6 +334,7 @@ class MobilitydbLayerHandler:
             log(f"Time taken to fetch time delta {self.key} TgeomPoints : {self.TIME_time_delta_fetch}")
 
             self.current_tpoints = result_params['TgeomPoints_list']
+            iface.messageBar().pushMessage("Info", "TgeomPoints have been fetched, you can play the animation", level=Qgis.Info)
             self.fetch_time_delta(self.next_key, self.next_begin_ts, self.next_end_ts)
 
         except Exception as e:
@@ -476,6 +477,7 @@ class Move:
         self.frameDuration = self.temporal_controller.frameDuration()
         self.temporalExtents = self.temporal_controller.temporalExtents()
         self.total_frames = self.temporal_controller.totalFrameCount()
+        self.cumulativeRange = self.temporal_controller.temporalRangeCumulative()
         self.temporal_controller.updateTemporalRange.connect(self.on_new_frame)
 
         # States for NavigationMode etc
@@ -646,6 +648,9 @@ class Move:
     
             log(f"Current Frame : {self.temporal_controller.currentFrameNumber()}")
 
+            self.temporal_controller.pause()
+            iface.messageBar().pushMessage("Info", "Animation Paused : Temporal Controller settings where changed", level=Qgis.Info)
+
             if self.temporal_controller.navigationMode() != self.navigationMode: # Navigation Mode change -> For now only allow animated mode
                 if self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Animated:
                     self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Animated
@@ -675,6 +680,10 @@ class Move:
                 self.temporalExtents = self.temporal_controller.temporalExtents()
                 self.total_frames = self.temporal_controller.totalFrameCount()
                 log(f"to {self.temporalExtents} with {self.total_frames} frames")   
+            elif self.temporal_controller.temporalRangeCumulative() != self.cumulativeRange:
+                log(f"Cumulative range has changed from {self.cumulativeRange}")
+                self.cumulativeRange = self.temporal_controller.temporalRangeCumulative()
+                log(f"to {self.cumulativeRange}")
             else:
                 # Not handled : FPS change/cumulative range(no signal sent), animation state => Not handled, loop state => Not handled
                 
@@ -692,6 +701,7 @@ class Move:
 
 
     def reload_time_deltas(self):
+        iface.messageBar().pushMessage("Info", "Please wait for TGeomPoints to be reloaded", level=Qgis.Info)
         self.frame = self.temporal_controller.currentFrameNumber()
         self.key = self.frame // self.time_delta_size
         for task in self.task_manager.tasks():
