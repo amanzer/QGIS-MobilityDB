@@ -16,24 +16,30 @@ from pymeos import *
 import time
 
 from shapely.geometry import Point
+import gc
 
+import sys
+from pympler import asizeof
 
+def get_size(obj):
+    size_in_bytes = asizeof.asizeof(obj)
+    size_in_mb = size_in_bytes / (1024 ** 2)
+    return f"{size_in_mb} mb"
 
-
-# SRID = 4326
-# ########## AIS Danish maritime dataset ##########
-# DATABASE_NAME = "mobilitydb"
-# TPOINT_TABLE_NAME = "PyMEOS_demo"
-# TPOINT_ID_COLUMN_NAME = "MMSI"
-# TPOINT_COLUMN_NAME = "trajectory"
-
-
-SRID = 3857
+SRID = 4326
 ########## AIS Danish maritime dataset ##########
-DATABASE_NAME = "stib"
-TPOINT_TABLE_NAME = "trips_mdb"
-TPOINT_ID_COLUMN_NAME = "trip_id"
-TPOINT_COLUMN_NAME = "trip"
+DATABASE_NAME = "mobilitydb"
+TPOINT_TABLE_NAME = "PyMEOS_demo"
+TPOINT_ID_COLUMN_NAME = "MMSI"
+TPOINT_COLUMN_NAME = "trajectory"
+
+
+# SRID = 3857
+# ########## AIS Danish maritime dataset ##########
+# DATABASE_NAME = "stib"
+# TPOINT_TABLE_NAME = "trips_mdb"
+# TPOINT_ID_COLUMN_NAME = "trip_id"
+# TPOINT_COLUMN_NAME = "trip"
 
 
 
@@ -65,7 +71,7 @@ class DatabaseController:
     def get_TgeomPoints(self):
         try:
             query = f"""
-            SELECT {self.id_column_name}, {self.tpoint_column_name}, startTimestamp({self.tpoint_column_name}), endTimestamp({self.tpoint_column_name}) FROM public.{self.table_name} LIMIT 200000 ;
+            SELECT {self.id_column_name}, {self.tpoint_column_name}, startTimestamp({self.tpoint_column_name}), endTimestamp({self.tpoint_column_name}) FROM public.{self.table_name} LIMIT 300000 ;
             """
             log(f"Query : {query}")
             self.connection = MobilityDB.connect(**self.connection_params)
@@ -173,7 +179,8 @@ class fetch_data_thread(QgsTask):
             # end_time = self.start_date +  ( self.granularity_enum.value["timedelta"] * self.end_frame) # TODO :
             # rows = self.db.get_tgeompoints(start_time, end_time, self.extent, self.srid, self.n_objects)
             results = self.database_connector.get_TgeomPoints()
-            
+
+
             self.result_params = {
                 'TgeomPoints_list' : results
             }
@@ -217,46 +224,40 @@ class MobilitydbLayerHandler:
             self.TIME_fetch_tgeompoints = time.time() - self.last_time_record
             results = result_params['TgeomPoints_list']
             log(f"len of results : {len(results)}")
+            log(f"Size of results : {get_size(results)}")
+            # self.tgeompoints = {}
 
-            self.tgeompoints = {}
-
-            for row in results:
-                key = row[0]
-                if key in self.tgeompoints:
-                    self.tgeompoints[key][0].append(row[1]) 
-                    self.tgeompoints[key][2] =  row[3]
-                else:
-                    self.tgeompoints[key] = [[row[1]], row[2], row[3]]
-
-            log(f"len of tgeompoints : {len(self.tgeompoints)}")
-            log(f"Number of TgeomPoints fetched : {len(results)}")
-            results = None
-
-           
-
-            # log(f"len of tgeompoints: {len(self.tgeompoints)}")
             vlayer_fields=  self.vector_layer_controller.get_vlayer_fields()
-            
+
             features_list = []
             self.geometries = {}
             self.tpoints = {}
             index = 1
-            for key, value in self.tgeompoints.items():
-                feature = QgsFeature(vlayer_fields)
-                feature.setAttributes([ key, QDateTime(value[1]), QDateTime(value[2])])
-                geom = QgsGeometry()
-                self.geometries[index] = geom
-                feature.setGeometry(geom)
-                features_list.append(feature)
-                self.tpoints[index] = value[0]
-                index += 1
-            
-            self.objects_count = len(self.tgeompoints)
-            self.tgeompoints = None
-            self.vector_layer_controller.add_features(features_list)
-            log(f"Time taken to fetch TgeomPoints : {self.TIME_fetch_tgeompoints}")
-            log(f"Number of TgeomPoints fetched : {self.objects_count}")
-            iface.messageBar().pushMessage("Info", "TGeomPoints have been loaded", level=Qgis.Info)
+            try:
+                for row in results:
+                    self.tpoints[index] = row[1]
+                    feature = QgsFeature(vlayer_fields)
+                    feature.setAttributes([row[0], QDateTime(row[2]), QDateTime(row[3])])
+                    geom = QgsGeometry()
+                    self.geometries[index] = geom
+                    feature.setGeometry(geom)
+                    features_list.append(feature)
+                    
+                    index += 1
+
+
+                self.vector_layer_controller.add_features(features_list)
+                self.objects_count = index - 1
+                log(f"Time taken to fetch TgeomPoints : {self.TIME_fetch_tgeompoints}")
+                log(f"Number of TgeomPoints fetched : {self.objects_count}")
+                log(f"Size of geometries : {get_size(self.geometries)}")
+                log(f"Size of tpoints : {get_size(self.tpoints)}") 
+                results = None # Freeing the memory
+                gc.collect()    # Freeing the memory
+                iface.messageBar().pushMessage("Info", "TGeomPoints have been loaded", level=Qgis.Info)
+            except Exception as e:
+                log(f"Error in creating features : {e} \n row : {row} \n index : {index}")
+                
         except Exception as e:
             log(f"Error in on_fetch_data_finished : {e}")
 
@@ -269,18 +270,14 @@ class MobilitydbLayerHandler:
         empty_geom = Point().wkb
         for i in range(1, self.objects_count+1):
             # Fetching the position of the object at the current frame
-            position = None
-            for tgeompoint in self.tpoints[i]:
-                if tgeompoint.contains(timestamp):
-                    position = tgeompoint.value_at_timestamp(timestamp)
-                    # Updating the geometry of the feature in the vector layer
-            if position is None:
-                self.geometries[i].fromWkb(empty_geom)
-            else:
+            try:
+                
+                position = self.tpoints[i].value_at_timestamp(timestamp)
+                # Updating the geometry of the feature in the vector layer
                 self.geometries[i].fromWkb(position.wkb) # = QgsGeometry.fromWkt(position.wkt)
                 hits+=1
-                
-                
+            except:
+                self.geometries[i].fromWkb(empty_geom)
         log(f"Number of hits : {hits}")
         self.vector_layer_controller.vlayer.startEditing()
         self.vector_layer_controller.vlayer.dataProvider().changeGeometryValues(self.geometries)
