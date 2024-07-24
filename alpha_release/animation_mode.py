@@ -328,20 +328,27 @@ class MobilitydbLayerHandler:
     """
     Initializes and handles a layer to view MobilityDB data.
     """
-    def __init__(self, iface, task_manager, database_controller, limit, waiting_tdelta, start_ts):
+    def __init__(self, iface, task_manager, database_controller, limit, waiting_tdelta, start_ts, begin_ts_1, end_ts_1, begin_ts_2, end_ts_2):
         self.iface = iface
         self.task_manager = task_manager
         self.database_controller = database_controller
         self.limit = limit
         self.waiting_tdelta= waiting_tdelta
-        
+        self.waiting_tdelta.set_waiting(True)
+
         self.vlayer_created = False
+        self.previous_tpoints = None
         self.current_tpoints = None
         self.next_tpoints = None
-        self.waiting_for_next_time_delta = False
+        
         self.geometries = {}
         self.id=0
         self.start_ts = start_ts
+
+        self.begin_ts = begin_ts_1
+        self.end_ts = end_ts_1
+        self.next_begin_ts = begin_ts_2
+        self.next_end_ts = end_ts_2
 
         self.last_time_record = time.time()
         task = initialize_qgis_features("Fetching MobilityDB Data", "MobilityDB Data", self.database_controller, self.create_vector_layer, self.raise_error)
@@ -352,7 +359,7 @@ class MobilitydbLayerHandler:
         self.current_tpoints = None
         self.next_tpoints = None
         self.previous_tpoints = None
-        self.waiting_for_next_time_delta = False
+        self.waiting_tdelta.set_waiting(False)   
 
         if len(self.geometries) > 0:
             empty_geom = Point().wkb
@@ -385,7 +392,9 @@ class MobilitydbLayerHandler:
             self.new_frame(self.start_ts)            
             # iface.messageBar().pushMessage("Info", "Upcoming TgeomPoints have been loaded", level=Qgis.Info)
             self.fetch_time_delta(self.next_begin_ts, self.next_end_ts)
-
+            self.waiting_tdelta.set_waiting(False)
+            iface.messageBar().pushMessage("Info", "Vector layer created, first time delta loaded, animation can play", level=Qgis.Info)
+            log("Vector layer created, first time delta loaded, animation can play")
         except Exception as e:
             log(f"Error in fetch_second_time_delta : {e}")
 
@@ -441,7 +450,7 @@ class MobilitydbLayerHandler:
 
 
     def switch_time_delta(self):
-        if not self.waiting_for_next_time_delta:
+        if not self.waiting_tdelta.is_waiting():
             self.previous_tpoints = self.current_tpoints
             self.current_tpoints = self.next_tpoints
             self.next_tpoints = None
@@ -477,6 +486,11 @@ class MobilitydbLayerHandler:
             
         self.vector_layer_controller.add_features(features_list)
         self.vlayer_created = True
+
+        self.last_time_record = time.time()
+        self.task = fetch_time_delta_thread(f"Fetching Time Delta", "Move - MobilityDB", self.database_controller, self.begin_ts, self.end_ts, self.limit, self.id, self.fetch_second_time_delta, self.raise_error)
+        self.task_manager.addTask(self.task)
+
     
 
 
@@ -561,8 +575,25 @@ class Move:
       
         time_range = QgsDateTimeRange(self.database_connector.get_min_timestamp(), self.database_connector.get_max_timestamp())
         start_ts = self.temporal_controller.dateTimeRangeForFrameNumber(0).begin().toPyDateTime()
-        self.mobilitydb_layer_handler = MobilitydbLayerHandler(self.iface, self.task_manager, self.database_connector, LIMIT, self.waiting_tdelta, start_ts)
         self.temporal_controller.setTemporalExtents(time_range)
+
+        self.key = 0
+        
+        begin_frame = self.key*self.time_delta_size
+        end_frame = (begin_frame + self.time_delta_size) - 1
+        
+        begin_ts_1 = self.temporal_controller.dateTimeRangeForFrameNumber(begin_frame).begin().toPyDateTime()
+        end_ts_1 = self.temporal_controller.dateTimeRangeForFrameNumber(end_frame).begin().toPyDateTime()
+        
+        self.begin_frame = begin_frame + self.time_delta_size
+        self.end_frame = end_frame + self.time_delta_size
+
+        begin_ts_2 = self.temporal_controller.dateTimeRangeForFrameNumber(self.begin_frame).begin().toPyDateTime()
+        end_ts_2 = self.temporal_controller.dateTimeRangeForFrameNumber(self.end_frame).begin().toPyDateTime()
+        
+        self.next_key = self.key + 1
+
+        self.mobilitydb_layer_handler = MobilitydbLayerHandler(self.iface, self.task_manager, self.database_connector, LIMIT, self.waiting_tdelta, start_ts, begin_ts_1, end_ts_1, begin_ts_2, end_ts_2)
 
         # log("Creating animation for the following settings : \n")
         # log(f"NavigationMode : {self.temporal_controller.navigationMode()}")
@@ -577,7 +608,7 @@ class Move:
 
         log("Executing")
         
-        self.launch_animation()
+        # self.launch_animation()
 
         # log(f"Animation state : {self.temporal_controller.animationState()}")
 
@@ -607,13 +638,15 @@ class Move:
 
 
     def update_layers(self, current_frame):
-        self.mobilitydb_layer_handler.new_frame( self.temporal_controller.dateTimeRangeForFrameNumber(current_frame).begin().toPyDateTime())
-        # log(f"Update geometries for frame : {current_frame} with key {self.key}")
+        try:
+            self.mobilitydb_layer_handler.new_frame( self.temporal_controller.dateTimeRangeForFrameNumber(current_frame).begin().toPyDateTime())
+            # log(f"Update geometries for frame : {current_frame} with key {self.key}")
 
-        fps = 1 / (time.time() - self.onf_time)
-        self.temporal_controller.setFramesPerSecond(fps)
-        log(f"FPS : {fps}")
-
+            fps = 1 / (time.time() - self.onf_time)
+            self.temporal_controller.setFramesPerSecond(fps)
+            log(f"FPS : {fps}")
+        except Exception as e:
+            log(f"Error in updating layers : {e}")
 
     def switch_time_deltas(self):
         self.mobilitydb_layer_handler.switch_time_delta()
@@ -639,137 +672,137 @@ class Move:
         is_backward = (current_frame == previous_frame)
 
         log(f"$$New signal variables :\nCurrent Frame : {current_frame} | Next Frame : {next_frame} | Previous Frame : {previous_frame} | Forward : {is_forward} | Backward : {is_backward} ")
-        if not self.is_move_disabled:
-            if is_forward:
-                log("Forward signal")
-                if not self.waiting_tdelta.is_waiting():
-                    self.frame = current_frame
-                    key = self.frame // self.time_delta_size
+        
+        if is_forward:
+            log("Forward signal")
+            if not self.waiting_tdelta.is_waiting():
+                self.frame = current_frame
+                key = self.frame // self.time_delta_size
 
-                    if key == self.next_key and ((self.end_frame + self.time_delta_size) < self.total_frames): # Fetch Next time delta
-                        if self.task_manager.countActiveTasks() != 0:
-                            iface.messageBar().pushMessage("Info", "Animation paused, waiting for next time delta to load", level=Qgis.Info)
-                            self.waiting_tdelta.set_waiting(True)
-                            self.temporal_controller.pause()
-                        
-                        self.key = key
-                        self.next_key = self.key + 1
-                        self.switch_time_deltas()                        
-                        self.begin_frame = self.begin_frame + self.time_delta_size
-                        self.end_frame = self.end_frame + self.time_delta_size
-                        self.fetch_next_time_deltas(self.begin_frame, self.end_frame)
-                        log(f"next time delta : {self.begin_frame} to {self.end_frame} | self.key : {self.key} ")
-                    self.update_layers(self.frame)
-                else:
-                    log("Waiting for next time delta to load")
-                    self.temporal_controller.pause()
-                    self.temporal_controller.setCurrentFrameNumber(self.frame)
-            elif is_backward:
-                log("Backward navigation only in the same time delta")
+                if key == self.next_key and ((self.end_frame + self.time_delta_size) < self.total_frames): # Fetch Next time delta
+                    if self.task_manager.countActiveTasks() != 0:
+                        iface.messageBar().pushMessage("Info", "Animation paused, waiting for next time delta to load", level=Qgis.Info)
+                        self.waiting_tdelta.set_waiting(True)
+                        self.temporal_controller.pause()
+                    
+                    self.key = key
+                    self.next_key = self.key + 1
+                    self.switch_time_deltas()                        
+                    self.begin_frame = self.begin_frame + self.time_delta_size
+                    self.end_frame = self.end_frame + self.time_delta_size
+                    self.fetch_next_time_deltas(self.begin_frame, self.end_frame)
+                    log(f"next time delta : {self.begin_frame} to {self.end_frame} | self.key : {self.key} ")
+                self.update_layers(self.frame)
+            else:
+                log("Waiting for next time delta to load")
+                self.temporal_controller.pause()
+                self.temporal_controller.setCurrentFrameNumber(self.frame)
+        elif is_backward:
+            log("Backward navigation only in the same time delta")
+            key = current_frame // self.time_delta_size
+            if key == self.key:
+                self.frame = current_frame
+                self.update_layers(self.frame)
+            else:
+                log("Different time delta")
+                self.temporal_controller.pause()
+                self.temporal_controller.setCurrentFrameNumber(self.frame)
+        else:    
+            """
+            Multiple scenarios :
+            -Navigation Mode change
+            -Date Range change 
+            -Time granularity change
+            -FPS change
+            -Cumulative FPS change
+            - Verify if other scenario also trigger this signal
+
+            """ 
+            # self.frame = current_frame
+            is_configuration_changed = False
+            self.temporal_controller.pause()
+            self.temporal_controller.setCurrentFrameNumber(self.frame)
+
+            # log("\n\n#### Signal is not for frame change ####\n\n")
+            # log(f"TotalFrameCount : {self.temporal_controller.totalFrameCount()}")
+            # log(f"temporalRangeCumulative : {self.temporal_controller.temporalRangeCumulative()}")
+            # log(f"temporalExtents : {self.temporal_controller.temporalExtents()}")
+            # log(f"NavigationMode : {self.temporal_controller.navigationMode()}")
+            # log(f"isLooping : {self.temporal_controller.isLooping()}")
+            # log(f"FPS : {self.temporal_controller.framesPerSecond()}")
+            # log(f"Frame duration : {self.temporal_controller.frameDuration()}")
+            # log(f"Available temporal range : {self.temporal_controller.availableTemporalRanges()}")
+            # log(f"Animation state : {self.temporal_controller.animationState()}")
+    
+            # log(f"Current Frame : {self.temporal_controller.currentFrameNumber()}")
+
+            if self.temporal_controller.navigationMode() != self.navigationMode: # Navigation Mode change 
+                is_configuration_changed = True
+                if self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Animated:
+                    self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Animated
+                    log("Navigation Mode Animated")
+                elif self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Disabled:
+                    self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Disabled
+                    log("Navigation Mode Disabled")
+                elif self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Movie:
+                    self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Movie
+                    log("Navigation Mode Movie")
+                elif self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.FixedRange:
+                    self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Animated
+                    log("Navigation Mode FixedRange")
+
+            elif self.temporal_controller.frameDuration() != self.frameDuration: # Frame duration change 
+                is_configuration_changed = True
+                log(f"Frame duration has changed from {self.frameDuration} with {self.total_frames} frames")
+                self.frameDuration = self.temporal_controller.frameDuration()
+                self.total_frames = self.temporal_controller.totalFrameCount()
+                log(f"to {self.frameDuration} with {self.total_frames} frames")
+
+            
+            elif self.temporal_controller.temporalExtents() != self.temporalExtents:
+                is_configuration_changed = True
+                log(f"temporal extents have changed from {self.temporalExtents} with {self.total_frames} frames")
+                self.temporalExtents = self.temporal_controller.temporalExtents()
+                self.total_frames = self.temporal_controller.totalFrameCount()
+                log(f"to {self.temporalExtents} with {self.total_frames} frames")   
+
+            elif self.temporal_controller.temporalRangeCumulative() != self.cumulative_range:
+                is_configuration_changed = True
+                log(f"cumulative range has changed from {self.cumulative_range}")
+                self.cumulative_range = self.temporal_controller.temporalRangeCumulative()
+                log(f"to {self.cumulative_range} with {self.total_frames} frames")
+            
+            if not is_configuration_changed:
+                """
+                Timeline has been skipped or other signal
+                if the current frame is in the same time delta, we set the current frame back to self.frame, otherwise :
+                1. Press load button again to reload the time deltas
+                2. We set the current_frame back to self.frame
+
+                """
+
+                log("Timeline skipped or other signal")
+                
                 key = current_frame // self.time_delta_size
                 if key == self.key:
+                    log("Same time delta")
                     self.frame = current_frame
                     self.update_layers(self.frame)
                 else:
                     log("Different time delta")
                     self.temporal_controller.pause()
                     self.temporal_controller.setCurrentFrameNumber(self.frame)
-            else:    
-                """
-                Multiple scenarios :
-                -Navigation Mode change
-                -Date Range change 
-                -Time granularity change
-                -FPS change
-                -Cumulative FPS change
-                - Verify if other scenario also trigger this signal
+            else:
+                log("Configuration changed, Press the load button to reload the animation")
 
-                """ 
-                # self.frame = current_frame
-                is_configuration_changed = False
+                # self.reload_button()
 
-                # log("\n\n#### Signal is not for frame change ####\n\n")
-                # log(f"TotalFrameCount : {self.temporal_controller.totalFrameCount()}")
-                # log(f"temporalRangeCumulative : {self.temporal_controller.temporalRangeCumulative()}")
-                # log(f"temporalExtents : {self.temporal_controller.temporalExtents()}")
-                # log(f"NavigationMode : {self.temporal_controller.navigationMode()}")
-                # log(f"isLooping : {self.temporal_controller.isLooping()}")
-                # log(f"FPS : {self.temporal_controller.framesPerSecond()}")
-                # log(f"Frame duration : {self.temporal_controller.frameDuration()}")
-                # log(f"Available temporal range : {self.temporal_controller.availableTemporalRanges()}")
-                # log(f"Animation state : {self.temporal_controller.animationState()}")
-        
-                # log(f"Current Frame : {self.temporal_controller.currentFrameNumber()}")
-
-                if self.temporal_controller.navigationMode() != self.navigationMode: # Navigation Mode change 
-                    is_configuration_changed = True
-                    if self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Animated:
-                        self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Animated
-                        log("Navigation Mode Animated")
-                    elif self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Disabled:
-                        self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Disabled
-                        log("Navigation Mode Disabled")
-                    elif self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.Movie:
-                        self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Movie
-                        log("Navigation Mode Movie")
-                    elif self.temporal_controller.navigationMode() == QgsTemporalNavigationObject.NavigationMode.FixedRange:
-                        self.navigationMode = QgsTemporalNavigationObject.NavigationMode.Animated
-                        log("Navigation Mode FixedRange")
-
-                elif self.temporal_controller.frameDuration() != self.frameDuration: # Frame duration change 
-                    is_configuration_changed = True
-                    log(f"Frame duration has changed from {self.frameDuration} with {self.total_frames} frames")
-                    self.frameDuration = self.temporal_controller.frameDuration()
-                    self.total_frames = self.temporal_controller.totalFrameCount()
-                    log(f"to {self.frameDuration} with {self.total_frames} frames")
-
-                
-                elif self.temporal_controller.temporalExtents() != self.temporalExtents:
-                    is_configuration_changed = True
-                    log(f"temporal extents have changed from {self.temporalExtents} with {self.total_frames} frames")
-                    self.temporalExtents = self.temporal_controller.temporalExtents()
-                    self.total_frames = self.temporal_controller.totalFrameCount()
-                    log(f"to {self.temporalExtents} with {self.total_frames} frames")   
-
-                elif self.temporal_controller.temporalRangeCumulative() != self.cumulative_range:
-                    is_configuration_changed = True
-                    log(f"cumulative range has changed from {self.cumulative_range}")
-                    self.cumulative_range = self.temporal_controller.temporalRangeCumulative()
-                    log(f"to {self.cumulative_range} with {self.total_frames} frames")
-                
-                if not is_configuration_changed:
-                    """
-                    Timeline has been skipped or other signal
-                    if the current frame is in the same time delta, we set the current frame back to self.frame, otherwise :
-                    1. Press load button again to reload the time deltas
-                    2. We set the current_frame back to self.frame
-
-                    """
-
-                    log("Timeline skipped or other signal")
-                    
-                    key = current_frame // self.time_delta_size
-                    if key == self.key:
-                        log("Same time delta")
-                        self.frame = current_frame
-                        self.update_layers(self.frame)
-                    else:
-                        log("Different time delta")
-                        self.temporal_controller.pause()
-                        self.temporal_controller.setCurrentFrameNumber(self.frame)
-                else:
-                    log("Configuration changed, Press the load button to reload the animation")
-                    self.is_move_disabled = True
-                    # self.reload_button()
-        else:
-            self.temporal_controller.pause()
-            self.temporal_controller.setCurrentFrameNumber(self.frame)
 
     def reload_button(self):
         # log("Changing internal configuration of temporal controller to match the new configuration \n")
         # log("Restating the animation")
         self.mobilitydb_layer_handler.id+=1
-        self.is_move_disabled = False
+
         self.frame = 0
         self.key = 0
         self.next_key = 0
@@ -785,8 +818,8 @@ class Move:
         # self.temporal_controller.setNavigationMode(QgsTemporalNavigationObject.NavigationMode.Animated)
         self.temporal_controller.setCurrentFrameNumber(0)
         self.temporal_controller.pause()
-        if self.mobilitydb_layer_handler.vlayer_created:
-            self.task_manager.cancelAll()
+        # if self.mobilitydb_layer_handler.vlayer_created:
+        #     self.task_manager.cancelAll()
         
         self.launch_animation(self.key)
         
